@@ -29,6 +29,16 @@ export type AuditEntry = {
   created_at: number;
 };
 
+export type RuleRecord = {
+  id: string;
+  business_id: string;
+  type: "service_area" | "business_hours" | "services_offered";
+  config: Record<string, unknown>;
+  enabled: boolean;
+  created_at: number;
+  updated_at: number;
+};
+
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -68,5 +78,45 @@ export function listAuditLog(
   const params = outcome && outcome !== "all" ? `?outcome=${outcome}` : "";
   return request<AuditEntry[]>(`/audit-log${params}`, {
     headers: { "X-Business-Id": businessId },
+  });
+}
+
+export function listRules(businessId: string): Promise<RuleRecord[]> {
+  return request<RuleRecord[]>("/rules", {
+    headers: { "X-Business-Id": businessId },
+  });
+}
+
+export function createRule(
+  businessId: string,
+  payload: Record<string, unknown>,
+): Promise<RuleRecord> {
+  return request<RuleRecord>("/rules", {
+    method: "POST",
+    headers: { "X-Business-Id": businessId },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateRule(
+  businessId: string,
+  ruleId: string,
+  payload: Record<string, unknown>,
+): Promise<RuleRecord> {
+  return request<RuleRecord>(`/rules/${ruleId}`, {
+    method: "PATCH",
+    headers: { "X-Business-Id": businessId },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteRule(businessId: string, ruleId: string): Promise<void> {
+  return fetch(`${API_URL}/rules/${ruleId}`, {
+    method: "DELETE",
+    headers: { "X-Business-Id": businessId },
+  }).then((response) => {
+    if (!response.ok) {
+      throw new Error(`Delete failed: ${response.status}`);
+    }
   });
 }

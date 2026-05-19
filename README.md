@@ -3,7 +3,7 @@
 Monorepo for a business-owner-safe booking guardrail:
 
 - `backend/` FastAPI, SQLite, Anthropic tool wrapper, pure validator evals
-- `frontend/` Vite + React + Tailwind owner console and chat surface
+- `frontend/` Vite + React + Tailwind customer chat route and owner dashboard route
 
 The build follows the sequence in `ARCHITECTURE.md`: health/deploy skeleton, pure validator contract and evals, schema/seed/rule CRUD, chat/audit integration, then React chat + audit dashboard.
 
@@ -57,14 +57,17 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`.
+Open the separated demo routes:
+
+- Customer chat: `http://localhost:5173/chat/biz_toms_hvac`
+- Owner dashboard: `http://localhost:5173/dashboard`
 
 Seeded demo businesses are created automatically on backend startup:
 
 - `Tom's HVAC INC`
 - `Mister Electricity INC`
 
-The owner UI sends the selected business as `X-Business-Id`. Customer chat routes use `/chat/{business_id}/messages`.
+Customer routes do not expose owner controls. The owner dashboard sends the selected business as `X-Business-Id` for `/rules`, `/audit-log`, and `/conversations`.
 
 ## Checks
 
