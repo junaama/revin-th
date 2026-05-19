@@ -15,16 +15,17 @@ import {
   AuditEntry,
   Business,
   ChatMessage,
-  ChatResponse,
   RuleRecord,
   createRule,
   deleteRule,
   listAuditLog,
   listBusinesses,
   listRules,
-  sendMessage,
+  streamMessage,
   updateRule,
 } from "./api";
+import { ServicesListPage } from "./pages/ServicesListPage";
+import { ServiceWizardPage } from "./pages/ServiceWizardPage";
 
 type OutcomeFilter = "all" | AuditEntry["outcome"];
 
@@ -50,6 +51,17 @@ export function App() {
   if (path.startsWith("/chat/")) {
     const businessId = decodeURIComponent(path.split("/")[2] ?? "");
     return <CustomerChatPage businessId={businessId} />;
+  }
+  if (path === "/dashboard/services") {
+    return <ServicesListPage />;
+  }
+  if (path === "/dashboard/services/new") {
+    return <ServiceWizardPage mode="create" serviceName={null} />;
+  }
+  const editMatch = path.match(/^\/dashboard\/services\/([^/]+)\/edit$/);
+  if (editMatch) {
+    const name = decodeURIComponent(editMatch[1]);
+    return <ServiceWizardPage mode="edit" serviceName={name} />;
   }
   if (path === "/dashboard") {
     return <OwnerDashboardPage />;
@@ -93,13 +105,17 @@ function RouteIndexPage() {
   );
 }
 
+type AgentPhase = "idle" | "thinking" | "responding";
+
 function CustomerChatPage({ businessId }: { businessId: string }) {
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>(starterMessages);
   const [conversationId, setConversationId] = useState<string | undefined>();
   const [draft, setDraft] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [phase, setPhase] = useState<AgentPhase>("idle");
   const [error, setError] = useState<string | null>(null);
+
+  const busy = phase !== "idle";
 
   const business = useMemo(
     () => businesses.find((item) => item.id === businessId),
@@ -117,33 +133,56 @@ function CustomerChatPage({ businessId }: { businessId: string }) {
     const content = draft.trim();
     if (!content || busy) return;
 
+    const pendingId = `pending-${crypto.randomUUID()}`;
     setMessages((current) => [
       ...current,
       { id: `local-${crypto.randomUUID()}`, role: "customer", content },
+      { id: pendingId, role: "agent", content: "" },
     ]);
     setDraft("");
-    setBusy(true);
+    setPhase("thinking");
     setError(null);
 
     try {
-      const response: ChatResponse = await sendMessage(businessId, content, conversationId);
-      setConversationId(response.conversation_id);
-      setMessages((current) => [
-        ...current,
-        { id: response.message_id, role: "agent", content: response.content },
-      ]);
-    } catch {
-      setError("The agent is unavailable right now.");
-      setMessages((current) => [
-        ...current,
+      await streamMessage(
+        businessId,
+        content,
+        conversationId,
         {
-          id: `error-${crypto.randomUUID()}`,
-          role: "agent",
-          content: "The agent is unavailable right now.",
+          onStatus: (nextPhase) => setPhase(nextPhase),
+          onToken: (token) => {
+            setPhase("responding");
+            setMessages((current) =>
+              current.map((message) =>
+                message.id === pendingId
+                  ? { ...message, content: message.content + token }
+                  : message,
+              ),
+            );
+          },
+          onDone: ({ conversation_id, message_id }) => {
+            setConversationId(conversation_id);
+            setMessages((current) =>
+              current.map((message) =>
+                message.id === pendingId ? { ...message, id: message_id } : message,
+              ),
+            );
+          },
+          onError: (message) => setError(message),
         },
-      ]);
+      );
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : "Agent error";
+      setError(detail || "The agent is unavailable right now.");
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === pendingId
+            ? { ...message, content: "The agent is unavailable right now." }
+            : message,
+        ),
+      );
     } finally {
-      setBusy(false);
+      setPhase("idle");
     }
   }
 
@@ -161,7 +200,7 @@ function CustomerChatPage({ businessId }: { businessId: string }) {
             <p className="text-xs text-[var(--muted)]">Customer session</p>
           </div>
           <span className="rounded-md bg-[var(--amber-soft)] px-2.5 py-1 text-xs font-semibold text-[var(--amber)]">
-            {busy ? "thinking" : "ready"}
+            {phase === "thinking" ? "thinking…" : phase === "responding" ? "responding…" : "ready"}
           </span>
         </div>
 
@@ -288,6 +327,7 @@ function OwnerDashboardPage() {
       title={selectedBusiness?.name ?? "Business controls"}
       actions={
         <div className="flex flex-wrap items-center gap-2">
+          <NavLink href="/dashboard/services">Services</NavLink>
           {businessId ? (
             <NavLink href={`/chat/${businessId}`}>
               Customer chat <ExternalLink className="h-3.5 w-3.5" />
@@ -519,6 +559,8 @@ function Shell({
 }
 
 function MessageBubble({ message }: { message: ChatMessage }) {
+  const isAgent = message.role !== "customer";
+  const isEmptyAgent = isAgent && message.content === "";
   return (
     <div
       className={`max-w-[88%] rounded-lg px-3 py-2 text-sm leading-6 ${
@@ -527,8 +569,30 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           : "mr-auto border border-[var(--line)] bg-[var(--wash)] text-[var(--ink)]"
       }`}
     >
-      {message.content}
+      {isEmptyAgent ? <ThinkingIndicator /> : message.content}
+      {isAgent && !isEmptyAgent && message.id.startsWith("pending-") ? (
+        <span className="ml-0.5 inline-block h-4 w-[2px] -translate-y-[1px] animate-pulse bg-[var(--ink)] align-middle" />
+      ) : null}
     </div>
+  );
+}
+
+function ThinkingIndicator() {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[var(--muted)]">
+      <span>thinking</span>
+      <span className="flex gap-0.5">
+        <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--muted)]" />
+        <span
+          className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--muted)]"
+          style={{ animationDelay: "120ms" }}
+        />
+        <span
+          className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--muted)]"
+          style={{ animationDelay: "240ms" }}
+        />
+      </span>
+    </span>
   );
 }
 
