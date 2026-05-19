@@ -28,7 +28,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="Revin Guardrail API", lifespan=lifespan)
+app = FastAPI(title="Agent Revin API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

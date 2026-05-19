@@ -81,7 +81,7 @@ function RouteIndexPage() {
 
   return (
     <Shell
-      eyebrow="Revin Guardrail"
+      eyebrow="Agent Revin"
       title="Demo routes"
       actions={<NavLink href="/dashboard">Owner dashboard</NavLink>}
     >
