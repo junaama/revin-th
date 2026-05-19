@@ -93,6 +93,7 @@ async def classify_action(
     business_name: str,
     customer_message: str,
     rules: list[Rule],
+    conversation_history: list[dict[str, Any]] | None = None,
 ) -> ProposedAction:
     if not settings.anthropic_api_key:
         return AnswerQuestion(
@@ -108,7 +109,10 @@ async def classify_action(
             system=_classifier_prompt(business_name, rules),
             tools=TOOL_DEFINITIONS,
             tool_choice={"type": "any"},
-            messages=[{"role": "user", "content": customer_message}],
+            messages=_anthropic_history_messages(
+                conversation_history,
+                current_customer_message=customer_message,
+            ),
         )
     except Exception as exc:  # pragma: no cover - network/provider edge
         raise AgentUnavailable("Classifier LLM call failed") from exc
@@ -131,6 +135,7 @@ async def synthesize_reply(
     customer_message: str,
     action: ProposedAction,
     decision: RuleDecision,
+    conversation_history: list[dict[str, Any]] | None = None,
 ) -> str:
     fallback = _fallback_reply(action, decision)
     if not settings.anthropic_api_key:
@@ -149,6 +154,9 @@ async def synthesize_reply(
                     "content": json.dumps(
                         {
                             "customer_message": customer_message,
+                            "conversation_history": _customer_facing_history(
+                                conversation_history,
+                            ),
                             "proposed_action": action.model_dump(mode="json"),
                             "validator_decision": decision.model_dump(mode="json"),
                         }
@@ -171,6 +179,7 @@ async def synthesize_reply_stream(
     customer_message: str,
     action: ProposedAction,
     decision: RuleDecision,
+    conversation_history: list[dict[str, Any]] | None = None,
 ) -> AsyncIterator[str]:
     """Yield reply text chunks as they arrive from the synthesizer."""
     fallback = _fallback_reply(action, decision)
@@ -191,6 +200,9 @@ async def synthesize_reply_stream(
                     "content": json.dumps(
                         {
                             "customer_message": customer_message,
+                            "conversation_history": _customer_facing_history(
+                                conversation_history,
+                            ),
                             "proposed_action": action.model_dump(mode="json"),
                             "validator_decision": decision.model_dump(mode="json"),
                         }
@@ -216,15 +228,76 @@ def _client() -> AsyncAnthropic:
     )
 
 
+def _anthropic_history_messages(
+    conversation_history: list[dict[str, Any]] | None,
+    *,
+    current_customer_message: str,
+) -> list[dict[str, str]]:
+    if not conversation_history:
+        return [{"role": "user", "content": current_customer_message}]
+
+    messages: list[dict[str, str]] = []
+    for item in conversation_history[-16:]:
+        role = item.get("role")
+        content = str(item.get("content") or "").strip()
+        if not content:
+            continue
+        if role == "customer":
+            messages.append({"role": "user", "content": content})
+        elif role == "agent":
+            messages.append({"role": "assistant", "content": content})
+
+    if not messages or messages[-1]["role"] != "user":
+        messages.append({"role": "user", "content": current_customer_message})
+    elif messages[-1]["content"] != current_customer_message:
+        messages.append({"role": "user", "content": current_customer_message})
+
+    return _merge_adjacent_anthropic_messages(messages)
+
+
+def _merge_adjacent_anthropic_messages(
+    messages: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    merged: list[dict[str, str]] = []
+    for message in messages:
+        if merged and merged[-1]["role"] == message["role"]:
+            merged[-1]["content"] = f"{merged[-1]['content']}\n\n{message['content']}"
+        else:
+            merged.append(dict(message))
+    return merged
+
+
+def _customer_facing_history(
+    conversation_history: list[dict[str, Any]] | None,
+) -> list[dict[str, str]]:
+    if not conversation_history:
+        return []
+    history: list[dict[str, str]] = []
+    for item in conversation_history[-12:]:
+        role = item.get("role")
+        content = str(item.get("content") or "").strip()
+        if role in {"customer", "agent"} and content:
+            history.append({"role": str(role), "content": content})
+    return history
+
+
 def _classifier_prompt(business_name: str, rules: list[Rule]) -> str:
     timezone = _business_timezone(rules)
     today = datetime.now(ZoneInfo(timezone)).date().isoformat()
     return f"""
-You classify one customer turn for {business_name}.
+You classify the latest customer turn for {business_name} using the conversation so far.
 
 You MUST call exactly one tool. Plain text is not allowed.
 Use book_appointment for concrete booking requests, quote_service for quote/estimate requests,
 and answer_question for informational answers.
+
+Use prior customer turns to fill missing booking or quote fields when the intent is
+unambiguous. If the latest customer turn corrects an earlier detail, use the latest
+value and keep the rest of the established intent. For example, if the customer
+previously asked for panel repair on Thursday at 3pm and then corrects the zip code,
+classify the latest turn as the same panel repair booking with the corrected zip.
+Do not drop known service, time, city, or zip details just because the latest turn is
+a short correction.
 
 For book_appointment.requested_at, always return an ISO 8601 date-time with an
 explicit UTC offset. If the customer gives a local time, use the business_hours
@@ -246,7 +319,10 @@ Use the validator decision as the source of truth. If outcome is blocked, do not
 promise or imply the blocked action succeeded, and mention only the violation
 reasons supplied by the validator. Do not add unverified rule details. If outcome
 is flagged, ask for the missing detail or tell the customer the business will
-review it. Keep replies brief, helpful, and specific.
+review it. Use the conversation history and proposed action to avoid re-asking for
+details the customer already supplied. When the latest message corrects one field,
+acknowledge the correction and continue from the established service and time.
+Keep replies brief, helpful, and specific.
 """.strip()
 
 

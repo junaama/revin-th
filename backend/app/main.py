@@ -132,6 +132,7 @@ async def chat_message(business_id: str, request: ChatRequest) -> StreamingRespo
     else:
         conversation_id = db.create_conversation(business_id)
     db.insert_message(conversation_id, "customer", request.content)
+    conversation_history = db.list_messages(business_id, conversation_id)
     rules = db.get_enabled_rule_models(business_id)
 
     async def event_stream() -> AsyncIterator[str]:
@@ -142,6 +143,7 @@ async def chat_message(business_id: str, request: ChatRequest) -> StreamingRespo
                 business_name=business["name"],
                 customer_message=request.content,
                 rules=rules,
+                conversation_history=conversation_history,
             )
         except AgentUnavailable:
             yield _sse(
@@ -169,6 +171,7 @@ async def chat_message(business_id: str, request: ChatRequest) -> StreamingRespo
             customer_message=request.content,
             action=action,
             decision=decision,
+            conversation_history=conversation_history,
         ):
             if not chunk:
                 continue

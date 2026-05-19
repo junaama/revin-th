@@ -270,6 +270,74 @@ def test_chat_stream_writes_messages_and_audit_for_validator_decisions(
         assert audit_entry["violations"][0]["rule_snapshot"]
 
 
+def test_chat_stream_passes_conversation_history_to_agent_loop(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    classifier_histories: list[list[dict[str, Any]]] = []
+    synthesizer_histories: list[list[dict[str, Any]]] = []
+
+    async def fake_classify_action(
+        *,
+        customer_message: str,
+        conversation_history: list[dict[str, Any]],
+        **_: Any,
+    ) -> ProposedAction:
+        classifier_histories.append(conversation_history)
+        if customer_message == "i meant 60607":
+            return BookAppointment(
+                service="panel repair",
+                requested_at=datetime.fromisoformat("2026-05-21T15:00:00-05:00"),
+                zip_code="60607",
+            )
+        return QuoteService(service="panel repair")
+
+    async def fake_synthesize_reply_stream(
+        *,
+        conversation_history: list[dict[str, Any]],
+        **_: Any,
+    ):
+        synthesizer_histories.append(conversation_history)
+        if conversation_history[-1]["content"] == "i meant 60607":
+            yield "Great, I can help with panel repair Thursday at 3pm."
+        else:
+            yield "Can you share your zip code?"
+
+    monkeypatch.setattr(main_module, "classify_action", fake_classify_action)
+    monkeypatch.setattr(
+        main_module,
+        "synthesize_reply_stream",
+        fake_synthesize_reply_stream,
+    )
+
+    first_response = client.post(
+        "/chat/biz_mister_electricity/messages",
+        json={"content": "okay can i book a panel repair on thursday 3pm"},
+        headers={"Accept": "text/event-stream"},
+    )
+    first_events = _parse_sse(first_response.text)
+    conversation_id = next(
+        event["data"]["conversation_id"]
+        for event in first_events
+        if event["event"] == "done"
+    )
+
+    second_response = client.post(
+        "/chat/biz_mister_electricity/messages",
+        json={"conversation_id": conversation_id, "content": "i meant 60607"},
+        headers={"Accept": "text/event-stream"},
+    )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert [message["content"] for message in classifier_histories[1]] == [
+        "okay can i book a panel repair on thursday 3pm",
+        "Can you share your zip code?",
+        "i meant 60607",
+    ]
+    assert synthesizer_histories[1] == classifier_histories[1]
+
+
 def test_chat_rejects_conversation_from_wrong_business(client: TestClient) -> None:
     conversation_id = db.create_conversation("biz_toms_hvac")
 
