@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Business,
   RuleRecord,
-  deleteRule,
+  deleteService,
   listBusinesses,
   listRules,
 } from "../api";
@@ -54,12 +54,7 @@ export function ServicesListPage() {
     setBusy(true);
     setError(null);
     try {
-      const scoped = rules.filter(
-        (r) => (r.config as { service?: string }).service === service.name,
-      );
-      for (const rule of scoped) {
-        await deleteRule(businessId, rule.id);
-      }
+      await deleteService(businessId, service.name);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete service");
