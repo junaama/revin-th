@@ -11,13 +11,6 @@ export type ChatMessage = {
   created_at?: number;
 };
 
-export type ChatResponse = {
-  conversation_id: string;
-  message_id: string;
-  content: string;
-  outcome: "allowed" | "blocked" | "flagged";
-};
-
 export type AuditEntry = {
   id: string;
   business_id: string;
@@ -116,24 +109,12 @@ export function listBusinesses(): Promise<Business[]> {
   return request<Business[]>("/businesses");
 }
 
-export function sendMessage(
-  businessId: string,
-  content: string,
-  conversationId?: string,
-): Promise<ChatResponse> {
-  return request<ChatResponse>(`/chat/${businessId}/messages`, {
-    method: "POST",
-    body: JSON.stringify({ conversation_id: conversationId, content }),
-  });
-}
-
 export type ChatStreamHandlers = {
   onStatus?: (phase: "thinking" | "responding", extra?: Record<string, unknown>) => void;
   onToken?: (text: string) => void;
   onDone?: (payload: {
     conversation_id: string;
     message_id: string;
-    outcome: "allowed" | "blocked" | "flagged";
   }) => void;
   onError?: (message: string) => void;
 };
@@ -210,7 +191,6 @@ function handleSseFrame(raw: string, handlers: ChatStreamHandlers): void {
     handlers.onDone?.({
       conversation_id: String(data.conversation_id ?? ""),
       message_id: String(data.message_id ?? ""),
-      outcome: (data.outcome ?? "allowed") as "allowed" | "blocked" | "flagged",
     });
   } else if (event === "error") {
     handlers.onError?.(String(data.message ?? "Agent error"));

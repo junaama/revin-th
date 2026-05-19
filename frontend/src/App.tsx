@@ -569,12 +569,41 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           : "mr-auto border border-[var(--line)] bg-[var(--wash)] text-[var(--ink)]"
       }`}
     >
-      {isEmptyAgent ? <ThinkingIndicator /> : message.content}
+      {isEmptyAgent ? (
+        <ThinkingIndicator />
+      ) : isAgent ? (
+        <AssistantText content={message.content} />
+      ) : (
+        message.content
+      )}
       {isAgent && !isEmptyAgent && message.id.startsWith("pending-") ? (
         <span className="ml-0.5 inline-block h-4 w-[2px] -translate-y-[1px] animate-pulse bg-[var(--ink)] align-middle" />
       ) : null}
     </div>
   );
+}
+
+function AssistantText({ content }: { content: string }) {
+  return (
+    <span className="whitespace-pre-wrap">
+      {content.split("\n").map((line, lineIndex) => (
+        <span key={`${line}-${lineIndex}`}>
+          {lineIndex > 0 ? "\n" : null}
+          {renderBoldSegments(line)}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function renderBoldSegments(line: string) {
+  const parts = line.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, index) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>;
+    }
+    return <span key={index}>{part}</span>;
+  });
 }
 
 function ThinkingIndicator() {
