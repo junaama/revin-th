@@ -1,0 +1,67 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --paper: #f7f5ef;
+  --ink: #18211f;
+  --muted: #69746f;
+  --muted-strong: #44504b;
+  --line: #d8ddd5;
+  --wash: #f4f7f2;
+  --focus: #0f766e;
+  --focus-dark: #115e59;
+  --amber: #9a5b12;
+  --amber-soft: #fff3d6;
+  --red: #b42318;
+  --red-soft: #fee4de;
+  --green: #116b3b;
+  --green-soft: #ddf4e7;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background:
+    linear-gradient(90deg, rgba(24, 33, 31, 0.04) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(24, 33, 31, 0.035) 1px, transparent 1px),
+    var(--paper);
+  background-size: 28px 28px;
+}
+
+button,
+select,
+input {
+  font: inherit;
+}
+
+.outcome {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 7.5rem;
+  min-height: 2rem;
+  border-radius: 0.375rem;
+  padding: 0.3rem 0.55rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.outcome-allowed {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.outcome-blocked {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.outcome-flagged {
+  background: var(--amber-soft);
+  color: var(--amber);
+}
