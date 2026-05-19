@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from . import db
 from .agent import AgentUnavailable, classify_action, synthesize_reply
@@ -54,6 +54,18 @@ def _owner_business_id(x_business_id: str | None = Header(default=None)) -> str:
     if not db.get_business(x_business_id):
         raise HTTPException(status_code=404, detail="Business not found")
     return x_business_id
+
+
+def _rule_validation_error(exc: ValidationError) -> HTTPException:
+    detail: list[dict[str, Any]] = []
+    for error in exc.errors():
+        clean_error = dict(error)
+        if "ctx" in clean_error:
+            clean_error["ctx"] = {
+                key: str(value) for key, value in clean_error["ctx"].items()
+            }
+        detail.append(clean_error)
+    return HTTPException(status_code=422, detail=detail)
 
 
 @app.get("/health")
@@ -126,7 +138,10 @@ def create_rule(
     payload: dict[str, Any],
     business_id: str = Depends(_owner_business_id),
 ) -> dict[str, Any]:
-    rule = RuleAdapter.validate_python(payload)
+    try:
+        rule = RuleAdapter.validate_python(payload)
+    except ValidationError as exc:
+        raise _rule_validation_error(exc) from exc
     return db.create_rule(business_id, rule.model_dump(mode="json"))
 
 
@@ -136,11 +151,14 @@ def patch_rule(
     patch: RulePatch,
     business_id: str = Depends(_owner_business_id),
 ) -> dict[str, Any]:
-    updated = db.update_rule(
-        business_id,
-        rule_id,
-        patch.model_dump(exclude_unset=True, mode="json"),
-    )
+    try:
+        updated = db.update_rule(
+            business_id,
+            rule_id,
+            patch.model_dump(exclude_unset=True, mode="json"),
+        )
+    except ValidationError as exc:
+        raise _rule_validation_error(exc) from exc
     if not updated:
         raise HTTPException(status_code=404, detail="Rule not found")
     return updated

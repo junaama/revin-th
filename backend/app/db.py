@@ -8,6 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from .settings import BACKEND_DIR, settings
+from .seed import seed_if_empty
 from .validator_contract import Rule, RuleAdapter
 
 
@@ -30,7 +31,7 @@ def init_db() -> None:
         ).fetchone()
         if not has_schema:
             conn.executescript(SCHEMA_PATH.read_text())
-        _seed_if_empty(conn)
+        seed_if_empty(conn)
 
 
 def list_businesses() -> list[dict[str, Any]]:
@@ -105,7 +106,8 @@ def update_rule(business_id: str, rule_id: str, patch: dict[str, Any]) -> dict[s
     if not existing:
         return None
 
-    enabled = patch.pop("enabled", existing["enabled"])
+    enabled_patch = patch.pop("enabled", None)
+    enabled = existing["enabled"] if enabled_patch is None else enabled_patch
     config = {**existing["config"], **patch, "id": rule_id}
     parsed = RuleAdapter.validate_python(config)
     now = _now()
@@ -264,135 +266,6 @@ def list_audit_log(
             params,
         ).fetchall()
         return [_audit_response(row) for row in rows]
-
-
-def _seed_if_empty(conn: sqlite3.Connection) -> None:
-    count = conn.execute("SELECT COUNT(*) AS count FROM businesses").fetchone()["count"]
-    if count:
-        return
-
-    now = _now()
-    businesses = [
-        ("biz_toms_hvac", "Tom's HVAC INC", "America/Chicago"),
-        ("biz_mister_electricity", "Mister Electricity INC", "America/Chicago"),
-    ]
-    owners = [
-        ("owner_tom", "Tom Alvarez", "tom@example.test", "biz_toms_hvac"),
-        (
-            "owner_mister_electricity",
-            "Mia Benton",
-            "mia@example.test",
-            "biz_mister_electricity",
-        ),
-    ]
-
-    conn.executemany(
-        "INSERT INTO businesses (id, name, timezone, created_at) VALUES (?, ?, ?, ?)",
-        [(business_id, name, tz, now) for business_id, name, tz in businesses],
-    )
-    conn.executemany(
-        """
-        INSERT INTO business_owners (id, name, email, business_id, created_at)
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        [(owner_id, name, email, business_id, now) for owner_id, name, email, business_id in owners],
-    )
-
-    rules = [
-        (
-            "rule_toms_services",
-            "biz_toms_hvac",
-            "services_offered",
-            {
-                "type": "services_offered",
-                "id": "rule_toms_services",
-                "services": ["hvac repair", "ac tune up", "furnace inspection"],
-            },
-        ),
-        (
-            "rule_toms_area",
-            "biz_toms_hvac",
-            "service_area",
-            {
-                "type": "service_area",
-                "id": "rule_toms_area",
-                "zip_codes": ["78704", "78745", "78748"],
-                "cities": ["Austin, TX", "Sunset Valley, TX"],
-            },
-        ),
-        (
-            "rule_toms_hours",
-            "biz_toms_hvac",
-            "business_hours",
-            {
-                "type": "business_hours",
-                "id": "rule_toms_hours",
-                "timezone": "America/Chicago",
-                "windows": _weekday_windows("09:00", "17:00"),
-                "exceptions": [
-                    {
-                        "start_date": "2026-07-04",
-                        "end_date": "2026-07-04",
-                        "reason": "Independence Day",
-                    }
-                ],
-            },
-        ),
-        (
-            "rule_electric_services",
-            "biz_mister_electricity",
-            "services_offered",
-            {
-                "type": "services_offered",
-                "id": "rule_electric_services",
-                "services": [
-                    "panel repair",
-                    "outlet installation",
-                    "lighting installation",
-                ],
-            },
-        ),
-        (
-            "rule_electric_area",
-            "biz_mister_electricity",
-            "service_area",
-            {
-                "type": "service_area",
-                "id": "rule_electric_area",
-                "zip_codes": ["60607", "60608", "60616"],
-                "cities": ["Chicago, IL", "Cicero, IL"],
-            },
-        ),
-        (
-            "rule_electric_hours",
-            "biz_mister_electricity",
-            "business_hours",
-            {
-                "type": "business_hours",
-                "id": "rule_electric_hours",
-                "timezone": "America/Chicago",
-                "windows": _weekday_windows("08:00", "18:00"),
-            },
-        ),
-    ]
-
-    conn.executemany(
-        """
-        INSERT INTO rules (id, business_id, type, config, enabled, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 1, ?, ?)
-        """,
-        [
-            (rule_id, business_id, rule_type, json.dumps(config), now, now)
-            for rule_id, business_id, rule_type, config in rules
-        ],
-    )
-
-
-def _weekday_windows(open_time: str, close_time: str) -> list[dict[str, str]]:
-    return [
-        {"day": day, "open_time": open_time, "close_time": close_time}
-        for day in ("monday", "tuesday", "wednesday", "thursday", "friday")
-    ]
 
 
 def _rule_response(row: sqlite3.Row) -> dict[str, Any]:
