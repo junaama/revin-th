@@ -83,8 +83,21 @@ class ServicesOfferedRule(BaseModel):
     service: str | None = None
 
 
+class BookingPolicyRule(BaseModel):
+    type: Literal["booking_policy"] = "booking_policy"
+    id: str | None = None
+    min_lead_minutes: int = Field(ge=0, default=0)
+    max_advance_days: int = Field(ge=1, default=365)
+    service: str | None = None
+
+
 Rule = Annotated[
-    Union[ServiceAreaRule, BusinessHoursRule, ServicesOfferedRule],
+    Union[
+        ServiceAreaRule,
+        BusinessHoursRule,
+        ServicesOfferedRule,
+        BookingPolicyRule,
+    ],
     Field(discriminator="type"),
 ]
 

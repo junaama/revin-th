@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from .settings import BACKEND_DIR, settings
 from .seed import seed_if_empty
-from .validator_contract import Rule, RuleAdapter
+from .validator_contract import Rule, RuleAdapter, RulesAdapter
 
 
 SCHEMA_PATH = BACKEND_DIR / "schema.sql"
@@ -31,7 +31,35 @@ def init_db() -> None:
         ).fetchone()
         if not has_schema:
             conn.executescript(SCHEMA_PATH.read_text())
+        _migrate_rules_check(conn)
         seed_if_empty(conn)
+
+
+def _migrate_rules_check(conn: sqlite3.Connection) -> None:
+    """Widen the rules.type CHECK to include booking_policy on legacy DBs."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'rules'"
+    ).fetchone()
+    if not row or "booking_policy" in (row["sql"] or ""):
+        return
+    conn.executescript(
+        """
+        CREATE TABLE rules_new (
+            id           TEXT PRIMARY KEY,
+            business_id  TEXT NOT NULL REFERENCES businesses(id),
+            type         TEXT NOT NULL
+                         CHECK (type IN ('service_area','business_hours','services_offered','booking_policy')),
+            config       TEXT NOT NULL,
+            enabled      INTEGER NOT NULL DEFAULT 1,
+            created_at   INTEGER NOT NULL,
+            updated_at   INTEGER NOT NULL
+        );
+        INSERT INTO rules_new SELECT id, business_id, type, config, enabled, created_at, updated_at FROM rules;
+        DROP TABLE rules;
+        ALTER TABLE rules_new RENAME TO rules;
+        CREATE INDEX idx_rules_business_enabled ON rules(business_id, enabled);
+        """
+    )
 
 
 def list_businesses() -> list[dict[str, Any]]:
@@ -142,6 +170,118 @@ def delete_rule(business_id: str, rule_id: str) -> bool:
             (business_id, rule_id),
         )
         return cur.rowcount > 0
+
+
+def apply_service_wizard(
+    business_id: str,
+    rule_payloads: list[dict[str, Any]],
+    services_offered_payload: dict[str, Any] | None,
+    services_offered_id: str | None,
+    service_name: str,
+    scoped_rule_ids_to_delete: list[str],
+) -> tuple[list[str], list[str]]:
+    """Atomically replace per-service rules and update services_offered.
+
+    All operations execute inside a single transaction; on any error
+    sqlite rolls back automatically.
+    """
+    now = _now()
+    created_ids: list[str] = []
+
+    # Pre-validate every payload before opening a write transaction.
+    validated_rules = RulesAdapter.validate_python(rule_payloads)
+
+    with connect() as conn:
+        # Replace business-wide services_offered if asked.
+        if services_offered_payload is not None and services_offered_id is not None:
+            parsed = RuleAdapter.validate_python(services_offered_payload)
+            conn.execute(
+                """
+                UPDATE rules
+                   SET type = ?, config = ?, enabled = 1, updated_at = ?
+                 WHERE business_id = ? AND id = ?
+                """,
+                (
+                    parsed.type,
+                    parsed.model_dump_json(),
+                    now,
+                    business_id,
+                    services_offered_id,
+                ),
+            )
+        elif services_offered_payload is not None:
+            parsed = RuleAdapter.validate_python(services_offered_payload)
+            new_id = parsed.id or f"rule_{uuid4().hex}"
+            parsed = parsed.model_copy(update={"id": new_id})
+            conn.execute(
+                """
+                INSERT INTO rules (id, business_id, type, config, enabled, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 1, ?, ?)
+                """,
+                (new_id, business_id, parsed.type, parsed.model_dump_json(), now, now),
+            )
+
+        # Drop existing scoped rules.
+        for rule_id in scoped_rule_ids_to_delete:
+            conn.execute(
+                "DELETE FROM rules WHERE business_id = ? AND id = ?",
+                (business_id, rule_id),
+            )
+
+        # Insert new scoped rules.
+        for rule in validated_rules:
+            new_id = rule.id or f"rule_{uuid4().hex}"
+            parsed = rule.model_copy(update={"id": new_id})
+            conn.execute(
+                """
+                INSERT INTO rules (id, business_id, type, config, enabled, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 1, ?, ?)
+                """,
+                (new_id, business_id, parsed.type, parsed.model_dump_json(), now, now),
+            )
+            created_ids.append(new_id)
+
+    return created_ids, list(scoped_rule_ids_to_delete)
+
+
+def remove_service(
+    business_id: str,
+    service_name: str,
+    services_offered_payload: dict[str, Any] | None,
+    services_offered_id: str | None,
+    scoped_rule_ids_to_delete: list[str],
+) -> list[str]:
+    """Delete all scoped rules and drop the name from services_offered."""
+    now = _now()
+    deleted: list[str] = []
+
+    with connect() as conn:
+        if services_offered_payload is not None and services_offered_id is not None:
+            parsed = RuleAdapter.validate_python(services_offered_payload)
+            conn.execute(
+                """
+                UPDATE rules
+                   SET type = ?, config = ?, enabled = 1, updated_at = ?
+                 WHERE business_id = ? AND id = ?
+                """,
+                (
+                    parsed.type,
+                    parsed.model_dump_json(),
+                    now,
+                    business_id,
+                    services_offered_id,
+                ),
+            )
+
+        for rule_id in scoped_rule_ids_to_delete:
+            cur = conn.execute(
+                "DELETE FROM rules WHERE business_id = ? AND id = ?",
+                (business_id, rule_id),
+            )
+            if cur.rowcount > 0:
+                deleted.append(rule_id)
+
+    return deleted
 
 
 def create_conversation(business_id: str) -> str:

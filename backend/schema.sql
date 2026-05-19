@@ -65,7 +65,7 @@ CREATE TABLE rules (
     id           TEXT PRIMARY KEY,
     business_id  TEXT NOT NULL REFERENCES businesses(id),
     type         TEXT NOT NULL
-                 CHECK (type IN ('service_area','business_hours','services_offered')),
+                 CHECK (type IN ('service_area','business_hours','services_offered','booking_policy')),
     config       TEXT NOT NULL,                 -- JSON
     enabled      INTEGER NOT NULL DEFAULT 1,    -- 0/1
     created_at   INTEGER NOT NULL,

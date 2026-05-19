@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
 
-from . import db
+from . import db, service_wizard
 from .agent import AgentUnavailable, classify_action, synthesize_reply_stream
 from .settings import settings
 from .validator_contract import (
@@ -242,6 +242,72 @@ def patch_rule(
 def delete_rule(rule_id: str, business_id: str = Depends(_owner_business_id)) -> None:
     if not db.delete_rule(business_id, rule_id):
         raise HTTPException(status_code=404, detail="Rule not found")
+
+
+@app.post("/service-wizard")
+def service_wizard_submit(
+    payload: dict[str, Any],
+    business_id: str = Depends(_owner_business_id),
+) -> dict[str, Any]:
+    try:
+        request = service_wizard.ServiceWizardRequest.model_validate(payload)
+    except ValidationError as exc:
+        raise _wizard_validation_error(exc) from exc
+
+    business = db.get_business(business_id)
+    timezone = business["timezone"] if business else "America/Chicago"
+
+    try:
+        return service_wizard.apply_wizard(business_id, request, timezone)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=[{"loc": ["service", "name"], "msg": str(exc), "type": "value_error"}],
+        ) from exc
+    except ValidationError as exc:
+        raise _wizard_validation_error(exc) from exc
+
+
+@app.delete("/service-wizard/{service_name}")
+def service_wizard_delete(
+    service_name: str,
+    business_id: str = Depends(_owner_business_id),
+) -> dict[str, Any]:
+    result = service_wizard.remove_service(business_id, service_name)
+    if not result["deleted_rule_ids"]:
+        # Nothing matched - the name was already absent.
+        raise HTTPException(status_code=404, detail="Service not found")
+    return result
+
+
+def _wizard_validation_error(exc: ValidationError) -> HTTPException:
+    _STEP_BY_PREFIX = {
+        ("service", "name"): 0,
+        ("service", "service_area"): 1,
+        ("service", "availability", "windows"): 2,
+        ("service", "availability", "exceptions"): 3,
+        ("service", "availability"): 2,
+        ("service", "booking_policy"): 4,
+    }
+    detail: list[dict[str, Any]] = []
+    for error in exc.errors():
+        loc = tuple(error.get("loc", ()))
+        step = 0
+        for prefix_len in range(len(loc), 0, -1):
+            prefix = loc[:prefix_len]
+            if prefix in _STEP_BY_PREFIX:
+                step = _STEP_BY_PREFIX[prefix]
+                break
+        entry = {
+            "step": step,
+            "loc": list(loc),
+            "msg": error.get("msg"),
+            "type": error.get("type"),
+        }
+        if "ctx" in error:
+            entry["ctx"] = {key: str(value) for key, value in error["ctx"].items()}
+        detail.append(entry)
+    return HTTPException(status_code=422, detail=detail)
 
 
 @app.get("/audit-log")
