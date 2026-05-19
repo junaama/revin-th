@@ -184,3 +184,55 @@ def test_delete_service_removes_rules_and_offered_entry(client: TestClient) -> N
 def test_delete_unknown_service_returns_404(client: TestClient) -> None:
     response = client.delete("/service-wizard/nope", headers=TOM_HEADERS)
     assert response.status_code == 404
+
+
+def test_edit_can_rename_service(client: TestClient) -> None:
+    create = client.post(
+        "/service-wizard", headers=TOM_HEADERS, json=_create_payload("hedge trim")
+    )
+    assert create.status_code == 200
+    initial_ids = set(create.json()["created_rule_ids"])
+
+    rename_payload = _create_payload("hedge sculpt")
+    rename_payload["mode"] = "edit"
+    rename_payload["original_name"] = "hedge trim"
+
+    response = client.post("/service-wizard", headers=TOM_HEADERS, json=rename_payload)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["service"] == "hedge sculpt"
+    assert set(body["deleted_rule_ids"]) == initial_ids
+
+    rules = client.get("/rules", headers=TOM_HEADERS).json()
+    old_scoped = [r for r in rules if r["config"].get("service") == "hedge trim"]
+    new_scoped = [r for r in rules if r["config"].get("service") == "hedge sculpt"]
+    assert old_scoped == []
+    assert {r["type"] for r in new_scoped} == {
+        "service_area",
+        "business_hours",
+        "booking_policy",
+    }
+
+    offered = next(
+        rule
+        for rule in rules
+        if rule["type"] == "services_offered" and not rule["config"].get("service")
+    )
+    assert "hedge trim" not in offered["config"]["services"]
+    assert "hedge sculpt" in offered["config"]["services"]
+
+
+def test_edit_rename_collision_rejected(client: TestClient) -> None:
+    client.post("/service-wizard", headers=TOM_HEADERS, json=_create_payload("alpha"))
+    client.post("/service-wizard", headers=TOM_HEADERS, json=_create_payload("beta"))
+
+    rename = _create_payload("beta")
+    rename["mode"] = "edit"
+    rename["original_name"] = "alpha"
+
+    response = client.post("/service-wizard", headers=TOM_HEADERS, json=rename)
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert any("alpha" not in str(item.get("msg", "")) for item in detail) or any(
+        "beta" in str(item.get("msg", "")) for item in detail
+    )
