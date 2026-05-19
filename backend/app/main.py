@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import json
 from contextlib import asynccontextmanager
-from typing import Any, Literal
+from typing import Any, AsyncIterator, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from . import db
-from .agent import AgentUnavailable, classify_action, synthesize_reply
+from .agent import AgentUnavailable, classify_action, synthesize_reply_stream
 from .settings import settings
 from .validator_contract import RuleAdapter, evaluate
 
@@ -78,8 +80,13 @@ def businesses() -> list[dict[str, Any]]:
     return db.list_businesses()
 
 
-@app.post("/chat/{business_id}/messages", response_model=ChatResponse)
-async def chat_message(business_id: str, request: ChatRequest) -> ChatResponse:
+def _sse(event: str, data: dict[str, Any] | str) -> str:
+    payload = data if isinstance(data, str) else json.dumps(data)
+    return f"event: {event}\ndata: {payload}\n\n"
+
+
+@app.post("/chat/{business_id}/messages")
+async def chat_message(business_id: str, request: ChatRequest) -> StreamingResponse:
     business = db.get_business(business_id)
     if not business:
         raise HTTPException(status_code=404, detail="Business not found")
@@ -88,36 +95,66 @@ async def chat_message(business_id: str, request: ChatRequest) -> ChatResponse:
     db.insert_message(conversation_id, "customer", request.content)
     rules = db.get_enabled_rule_models(business_id)
 
-    try:
-        action = await classify_action(
+    async def event_stream() -> AsyncIterator[str]:
+        yield _sse("status", {"phase": "thinking", "conversation_id": conversation_id})
+
+        try:
+            action = await classify_action(
+                business_name=business["name"],
+                customer_message=request.content,
+                rules=rules,
+            )
+        except AgentUnavailable:
+            yield _sse(
+                "error",
+                {"message": "Agent unavailable", "conversation_id": conversation_id},
+            )
+            return
+
+        decision = evaluate(rules, action)
+        db.append_audit_log(
+            business_id=business_id,
+            conversation_id=conversation_id,
+            action_proposed=action.model_dump(mode="json"),
+            outcome=decision.outcome,
+            violations=[v.model_dump(mode="json") for v in decision.violations],
+        )
+
+        yield _sse(
+            "status",
+            {"phase": "responding", "outcome": decision.outcome},
+        )
+
+        buffer = ""
+        async for chunk in synthesize_reply_stream(
             business_name=business["name"],
             customer_message=request.content,
-            rules=rules,
+            action=action,
+            decision=decision,
+        ):
+            if not chunk:
+                continue
+            buffer += chunk
+            yield _sse("token", {"text": chunk})
+
+        message_id = db.insert_message(conversation_id, "agent", buffer)
+        yield _sse(
+            "done",
+            {
+                "conversation_id": conversation_id,
+                "message_id": message_id,
+                "outcome": decision.outcome,
+            },
         )
-    except AgentUnavailable as exc:
-        raise HTTPException(status_code=503, detail="Agent unavailable") from exc
 
-    decision = evaluate(rules, action)
-    db.append_audit_log(
-        business_id=business_id,
-        conversation_id=conversation_id,
-        action_proposed=action.model_dump(mode="json"),
-        outcome=decision.outcome,
-        violations=[v.model_dump(mode="json") for v in decision.violations],
-    )
-
-    content = await synthesize_reply(
-        business_name=business["name"],
-        customer_message=request.content,
-        action=action,
-        decision=decision,
-    )
-    message_id = db.insert_message(conversation_id, "agent", content)
-    return ChatResponse(
-        conversation_id=conversation_id,
-        message_id=message_id,
-        content=content,
-        outcome=decision.outcome,
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
     )
 
 

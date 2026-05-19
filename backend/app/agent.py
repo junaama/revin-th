@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any
+from typing import Any, AsyncIterator
 from zoneinfo import ZoneInfo
 
 from anthropic import AsyncAnthropic
@@ -159,6 +159,50 @@ async def synthesize_reply(
         block.text for block in response.content if getattr(block, "type", None) == "text"
     ).strip()
     return text or fallback
+
+
+async def synthesize_reply_stream(
+    *,
+    business_name: str,
+    customer_message: str,
+    action: ProposedAction,
+    decision: RuleDecision,
+) -> AsyncIterator[str]:
+    """Yield reply text chunks as they arrive from the synthesizer."""
+    fallback = _fallback_reply(action, decision)
+    if not settings.anthropic_api_key:
+        yield fallback
+        return
+
+    client = _client()
+    try:
+        async with client.messages.stream(
+            model=settings.synthesizer_model,
+            max_tokens=500,
+            temperature=0,
+            system=_synthesizer_prompt(business_name),
+            messages=[
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "customer_message": customer_message,
+                            "proposed_action": action.model_dump(mode="json"),
+                            "validator_decision": decision.model_dump(mode="json"),
+                        }
+                    ),
+                }
+            ],
+        ) as stream:
+            emitted = False
+            async for chunk in stream.text_stream:
+                if chunk:
+                    emitted = True
+                    yield chunk
+            if not emitted:
+                yield fallback
+    except Exception:
+        yield fallback
 
 
 def _client() -> AsyncAnthropic:
