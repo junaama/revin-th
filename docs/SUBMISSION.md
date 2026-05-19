@@ -28,13 +28,13 @@ I chose the three rule types that map most directly to the costly failures in th
    - Prevents the agent from promising work the business does not actually do.
    - This covers the "commercial electrical vs residential plumbing" type of mistake.
 
-These are intentionally simple but extensible. Each rule is a typed Pydantic model stored in one polymorphic `rules` table. Adding a new rule type should mean adding one config model, one validator branch, and the matching owner UI, rather than changing the whole schema.
+Each rule is a typed Pydantic model stored in one polymorphic `rules` table. Adding a new rule type should mean adding one config model, one validator branch, and the matching owner UI, rather than changing the whole schema.
 
 ## How The Guardrail Works
 
-The customer-facing chat route does not expose rule details, audit outcomes, or owner controls. The agent proposes a structured action, the backend validates it against the current business rules, and the customer only sees the final safe response.
+The agent proposes a structured action, the backend validates it against the current business rules, and the customer only sees the final safe response.
 
-The owner-facing dashboard shows the operational truth: what action the agent attempted, whether it was allowed, blocked, or flagged, and which rule caused the decision. Audit entries store rule snapshots so historical decisions remain explainable even after a rule changes.
+The owner-facing dashboard shows: what action the agent attempted, whether it was allowed, blocked, or flagged, and which rule caused the decision. Audit entries store rule snapshots so historical decisions remain explainable even after a rule changes.
 
 ## Evals
 
@@ -109,4 +109,3 @@ For 500 businesses, I would make these swaps:
 - **Per-tenant budgets and rate limits** around LLM usage.
 - **Per-tenant observability** for blocked-action spikes, false positives, validator latency, and model spend.
 
-The important part is that the validator remains tenant-scoped and deterministic. Scaling should change the storage and cache layers, not the trust boundary.

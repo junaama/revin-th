@@ -1,11 +1,7 @@
 # Agent Revin Take-Home
 
-Monorepo for a business-owner-safe booking guardrail:
-
-- `backend/` FastAPI, SQLite, Anthropic tool wrapper, pure validator evals
+- `backend/` FastAPI, SQLite, Anthropic tool wrapper, validator evals
 - `frontend/` Vite + React + Tailwind customer chat route and owner dashboard route
-
-The build follows the sequence in `ARCHITECTURE.md`: health/deploy skeleton, pure validator contract and evals, schema/seed/rule CRUD, chat/audit integration, then React chat + audit dashboard.
 
 ## Live Demo
 
@@ -26,7 +22,7 @@ I chose the three rule types that map directly to the expensive failures in the 
 - **Business hours** blocks bookings outside the business's configured schedule and timezone.
 - **Services offered** blocks the agent from promising work the business does not do.
 
-The data model also supports service-specific overrides, so a business can have broad default rules plus narrower rules for a specific service. Rules are stored in one polymorphic table and validated with Pydantic discriminated unions, which keeps the demo extensible without turning the three-hour version into a generic policy engine.
+The data model also supports service-specific overrides, so a business can have broad default rules plus narrower rules for a specific service. Rules are stored in one polymorphic table and validated with Pydantic discriminated unions
 
 ### Guardrail Flow
 
@@ -66,7 +62,7 @@ With a full week, I would move SQLite to Postgres with migrations, finish servic
 
 ### Scaling To 500 Businesses
 
-The core trust boundary stays the same: LLM proposes, backend validates, customer sees safe text, owner sees the audit trail. To scale it, I would swap SQLite for Postgres, run stateless FastAPI instances behind a load balancer, cache rules in Redis with pub/sub invalidation on edits, move high-volume audit logs to append-optimized storage, and add per-tenant LLM budgets plus observability for blocked-action spikes, false positives, validator latency, and model spend.
+The core remains: LLM proposes, backend validates, customer sees safe text, owner sees the audit trail. To scale it, I would swap SQLite for Postgres, run stateless FastAPI instances behind a load balancer, cache rules in Redis with pub/sub invalidation on edits, move high-volume audit logs to append-optimized storage like DynamoDB, and add per-tenant LLM budgets plus observability for blocked-action spikes, false positives, validator latency, and model spend.
 
 See [`docs/submission-writeup.md`](docs/submission-writeup.md) and [`ARCHITECTURE.md`](ARCHITECTURE.md) for the longer design notes.
 
@@ -76,11 +72,9 @@ See [`docs/submission-writeup.md`](docs/submission-writeup.md) and [`ARCHITECTUR
 - `uv`
 - Node 22+
 - Anthropic API key
-- Railway CLI and GitHub `gh` CLI if you are deploying or creating a remote repo
+- Railway CLI
 
 ## Environment
-
-Do not paste secrets into chat or commit them.
 
 ```bash
 cp .env.example .env.local
@@ -148,7 +142,7 @@ cd frontend
 npm run build
 ```
 
-GitHub Actions runs both checks on every `push` and every pull request update. GitHub Actions cannot run on a purely local commit until it is pushed. If you want true local per-commit checks:
+GitHub Actions runs both checks on every `push` and every pull request update. If you want local per-commit checks:
 
 ```bash
 git config core.hooksPath .githooks

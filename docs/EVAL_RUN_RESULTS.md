@@ -2,9 +2,7 @@
 
 Generated: `2026-05-19T14:14:04-05:00`
 
-This file captures a real manual eval run through `POST /chat/{business_id}/messages`.
-The runner does not monkeypatch the classifier, synthesizer, validator, or audit log path.
-Secrets are not printed or stored.
+This file captures a manual eval run through `POST /chat/{business_id}/messages`.
 
 ## Run Metadata
 
