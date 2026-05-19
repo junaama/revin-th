@@ -3,20 +3,22 @@
 @tailwind utilities;
 
 :root {
-  --paper: #f6f8f7;
-  --ink: #18211f;
-  --muted: #69746f;
-  --muted-strong: #44504b;
-  --line: #d8e1dc;
-  --wash: #eef4f1;
-  --focus: #0f766e;
-  --focus-dark: #115e59;
-  --amber: #9a5b12;
-  --amber-soft: #fff3d6;
-  --red: #b42318;
-  --red-soft: #fee4de;
-  --green: #116b3b;
-  --green-soft: #ddf4e7;
+  --paper: #ffffff;
+  --ink: #1a1919;
+  --muted: #71717a;
+  --muted-strong: #3f3f46;
+  --line: #e4e4e7;
+  --wash: #f6f6f7;
+  --wash-strong: #f4f4f5;
+  --focus: #fa3500;
+  --focus-dark: #df2f00;
+  --focus-soft: #ffeee9;
+  --amber: #b54708;
+  --amber-soft: #fff4e5;
+  --red: #c21f00;
+  --red-soft: #ffeee9;
+  --green: #fa3500;
+  --green-soft: #ffeee9;
 }
 
 * {
@@ -25,17 +27,59 @@
 
 body {
   margin: 0;
-  background:
-    linear-gradient(90deg, rgba(24, 33, 31, 0.035) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(24, 33, 31, 0.03) 1px, transparent 1px),
-    var(--paper);
-  background-size: 28px 28px;
+  background: var(--paper);
+  color: var(--ink);
+  font-family:
+    "GT America Regular",
+    "GT America",
+    "Aptos",
+    "Helvetica Neue",
+    ui-sans-serif,
+    system-ui,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
 }
 
 button,
 select,
 input {
   font: inherit;
+}
+
+::selection {
+  background: var(--focus-soft);
+  color: var(--ink);
+}
+
+.brand-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  color: var(--ink);
+  font-family:
+    "GT America Medium",
+    "GT America",
+    "Aptos",
+    "Helvetica Neue",
+    ui-sans-serif,
+    system-ui,
+    sans-serif;
+  font-size: 1.28rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+  text-decoration: none;
+}
+
+.brand-mark::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-top: 0.36rem solid transparent;
+  border-bottom: 0.36rem solid transparent;
+  border-right: 0.62rem solid var(--focus);
+  transform: translateY(-0.1rem);
 }
 
 .outcome {
@@ -52,8 +96,8 @@ input {
 }
 
 .outcome-allowed {
-  background: var(--green-soft);
-  color: var(--green);
+  background: var(--wash-strong);
+  color: var(--muted-strong);
 }
 
 .outcome-blocked {

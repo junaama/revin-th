@@ -916,18 +916,29 @@ function Shell({
   return (
     <main className="min-h-screen bg-[var(--paper)] text-[var(--ink)]">
       <section className="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-4 py-5 sm:px-6 lg:px-8">
-        <header className="flex flex-col gap-4 border-b border-[var(--line)] pb-4 md:flex-row md:items-end md:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+        <header className="flex flex-col gap-4 border-b border-[var(--line)] pb-5 md:flex-row md:items-end md:justify-between">
+          <div className="min-w-0">
+            <BrandMark />
+            <p className="mt-5 font-mono text-xs font-normal uppercase tracking-[0.18em] text-[var(--focus)]">
               {eyebrow}
             </p>
-            <h1 className="mt-1 font-display text-3xl leading-tight sm:text-4xl">{title}</h1>
+            <h1 className="mt-1 font-display text-3xl font-medium leading-tight sm:text-4xl">
+              {title}
+            </h1>
           </div>
           {actions}
         </header>
         {children}
       </section>
     </main>
+  );
+}
+
+function BrandMark() {
+  return (
+    <a className="brand-mark" href="/dashboard" aria-label="Revin dashboard">
+      REVIN
+    </a>
   );
 }
 
