@@ -1,4 +1,4 @@
-# Revin Guardrail Take-Home
+# Agent Revin Take-Home
 
 Monorepo for a business-owner-safe booking guardrail:
 
