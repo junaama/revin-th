@@ -1,3 +1,21 @@
 .env*
 .env.local
 .env
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+*.egg-info/
+build/
+dist/
+*.db
+
+# Node / Vite
+node_modules/
+frontend/dist/
+.vite/
+
+# OS/editor
+.DS_Store
