@@ -6,6 +6,8 @@ import {
   listRules,
   submitServiceWizard,
 } from "../api";
+import { Button } from "../components/ui/button";
+import { Card, CardContent } from "../components/ui/card";
 import {
   WIZARD_STEP_TITLES,
   WizardState,
@@ -149,12 +151,11 @@ export function ServiceWizardPage({ mode, serviceName }: Props) {
               {state.form.name || "Untitled service"}
             </h1>
           </div>
-          <a
-            href="/dashboard/services"
-            className="inline-flex h-10 items-center gap-2 rounded-md border border-[var(--line)] bg-white px-3 text-sm font-semibold text-[var(--ink)] shadow-rule transition hover:border-[var(--focus)]"
-          >
-            <ArrowLeft className="h-4 w-4" /> All services
-          </a>
+          <Button asChild variant="outline">
+            <a href="/dashboard/services">
+              <ArrowLeft className="h-4 w-4" /> All services
+            </a>
+          </Button>
         </header>
 
         <Stepper current={state.step} />
@@ -185,50 +186,50 @@ export function ServiceWizardPage({ mode, serviceName }: Props) {
           </div>
         ) : null}
 
-        <section className="mt-5 rounded-lg border border-[var(--line)] bg-white p-5 shadow-rule">
-          {bootstrap.loading ? (
-            <p className="text-sm text-[var(--muted)]">Loading…</p>
-          ) : (
-            stepRender({
-              state,
-              dispatch,
-              timezone: business?.timezone ?? "America/Chicago",
-              payload,
-            })
-          )}
-        </section>
+        <Card className="mt-5">
+          <CardContent className="p-5">
+            {bootstrap.loading ? (
+              <p className="text-sm text-[var(--muted)]">Loading…</p>
+            ) : (
+              stepRender({
+                state,
+                dispatch,
+                timezone: business?.timezone ?? "America/Chicago",
+                payload,
+              })
+            )}
+          </CardContent>
+        </Card>
 
         <footer className="mt-5 flex flex-wrap items-center justify-between gap-3">
-          <button
+          <Button
             type="button"
             onClick={handleBack}
             disabled={state.step === 0 || state.busy}
-            className="inline-flex h-10 items-center gap-2 rounded-md border border-[var(--line)] bg-white px-3 text-sm font-semibold text-[var(--ink)] transition hover:border-[var(--focus)] disabled:cursor-not-allowed disabled:opacity-45"
+            variant="outline"
           >
             <ArrowLeft className="h-4 w-4" /> Back
-          </button>
+          </Button>
           <p className="text-xs text-[var(--muted)]">
             Step {state.step + 1} of {TOTAL_STEPS} — {WIZARD_STEP_TITLES[state.step]}
           </p>
           {state.step < TOTAL_STEPS - 1 ? (
-            <button
+            <Button
               type="button"
               onClick={handleNext}
               disabled={state.busy || bootstrap.loading}
-              className="inline-flex h-10 items-center gap-2 rounded-md bg-[var(--focus)] px-3 text-sm font-semibold text-white transition hover:bg-[var(--focus-dark)] disabled:cursor-not-allowed disabled:opacity-45"
             >
               Next <ArrowRight className="h-4 w-4" />
-            </button>
+            </Button>
           ) : (
-            <button
+            <Button
               type="button"
               onClick={handleSubmit}
               disabled={state.busy || bootstrap.loading}
-              className="inline-flex h-10 items-center gap-2 rounded-md bg-[var(--focus)] px-3 text-sm font-semibold text-white transition hover:bg-[var(--focus-dark)] disabled:cursor-not-allowed disabled:opacity-45"
             >
               <Check className="h-4 w-4" />
               {state.busy ? "Submitting…" : mode === "edit" ? "Save changes" : "Create service"}
-            </button>
+            </Button>
           )}
         </footer>
       </section>

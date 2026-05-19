@@ -7,6 +7,21 @@ import {
   listBusinesses,
   listRules,
 } from "../api";
+import { Button } from "../components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "../components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 import { ServiceSummary, getServiceSummaries } from "../wizard/state";
 
 export function ServicesListPage() {
@@ -76,33 +91,34 @@ export function ServicesListPage() {
             </h1>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <a
-              href="/dashboard"
-              className="inline-flex h-10 items-center gap-2 rounded-md border border-[var(--line)] bg-white px-3 text-sm font-semibold text-[var(--ink)] shadow-rule transition hover:border-[var(--focus)]"
-            >
-              Owner dashboard
-            </a>
-            <label className="flex items-center gap-2 text-sm font-medium text-[var(--muted)]">
+            <Button asChild variant="outline">
+              <a href="/dashboard">Owner dashboard</a>
+            </Button>
+            <div className="flex items-center gap-2 text-sm font-medium text-[var(--muted)]">
               <Store className="h-4 w-4" aria-hidden="true" />
-              <select
-                className="h-10 rounded-md border border-[var(--line)] bg-white px-3 text-sm text-[var(--ink)] shadow-rule outline-none transition focus:border-[var(--focus)]"
+              <Select
                 value={businessId}
-                onChange={(event) => setBusinessId(event.target.value)}
+                onValueChange={setBusinessId}
+                disabled={!businesses.length}
               >
-                {businesses.map((business) => (
-                  <option key={business.id} value={business.id}>
-                    {business.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <a
-              href="/dashboard/services/new"
-              className="inline-flex h-10 items-center gap-2 rounded-md bg-[var(--focus)] px-3 text-sm font-semibold text-white shadow-rule transition hover:bg-[var(--focus-dark)]"
-            >
-              <Plus className="h-4 w-4" />
-              New service
-            </a>
+                <SelectTrigger aria-label="Business" className="min-w-[13rem]">
+                  <SelectValue placeholder="Select business" />
+                </SelectTrigger>
+                <SelectContent>
+                  {businesses.map((business) => (
+                    <SelectItem key={business.id} value={business.id}>
+                      {business.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button asChild>
+              <a href="/dashboard/services/new">
+                <Plus className="h-4 w-4" />
+                New service
+              </a>
+            </Button>
           </div>
         </header>
 
@@ -112,16 +128,16 @@ export function ServicesListPage() {
           </div>
         ) : null}
 
-        <section className="mt-5 rounded-lg border border-[var(--line)] bg-white shadow-rule">
-          <div className="border-b border-[var(--line)] px-4 py-3">
-            <h2 className="text-base font-semibold">Configured services</h2>
-            <p className="text-xs text-[var(--muted)]">{services.length} configured</p>
-          </div>
+        <Card className="mt-5">
+          <CardHeader>
+            <CardTitle>Configured services</CardTitle>
+            <CardDescription>{services.length} configured</CardDescription>
+          </CardHeader>
 
           {services.length === 0 ? (
-            <div className="p-10 text-center text-sm text-[var(--muted)]">
+            <CardContent className="p-10 text-center text-sm text-[var(--muted)]">
               {busy ? "Loading…" : "No services yet. Click \"New service\" to add one."}
-            </div>
+            </CardContent>
           ) : (
             <ul className="divide-y divide-[var(--line)]">
               {services.map((service) => (
@@ -136,27 +152,27 @@ export function ServicesListPage() {
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <a
-                      href={`/dashboard/services/${encodeURIComponent(service.name)}/edit`}
-                      className="inline-flex h-9 items-center gap-2 rounded-md border border-[var(--line)] bg-white px-3 text-xs font-semibold text-[var(--ink)] transition hover:border-[var(--focus)]"
-                    >
-                      <Pencil className="h-3.5 w-3.5" /> Edit
-                    </a>
-                    <button
+                    <Button asChild size="sm" variant="outline">
+                      <a href={`/dashboard/services/${encodeURIComponent(service.name)}/edit`}>
+                        <Pencil className="h-3.5 w-3.5" /> Edit
+                      </a>
+                    </Button>
+                    <Button
                       type="button"
                       onClick={() => handleDelete(service)}
                       disabled={busy}
                       title="Delete service"
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-[var(--line)] bg-white text-[var(--ink)] transition hover:bg-[var(--wash)] disabled:cursor-not-allowed disabled:opacity-45"
+                      size="icon"
+                      variant="outline"
                     >
                       <Trash2 className="h-4 w-4" />
-                    </button>
+                    </Button>
                   </div>
                 </li>
               ))}
             </ul>
           )}
-        </section>
+        </Card>
       </section>
     </main>
   );
