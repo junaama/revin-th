@@ -82,6 +82,7 @@ class ServicePayload(BaseModel):
 
 class ServiceWizardRequest(BaseModel):
     mode: str
+    original_name: str | None = None
     service: ServicePayload
 
     @field_validator("mode")
@@ -90,6 +91,14 @@ class ServiceWizardRequest(BaseModel):
         if value not in ("create", "edit"):
             raise ValueError("mode must be 'create' or 'edit'")
         return value
+
+    @field_validator("original_name")
+    @classmethod
+    def original_name_clean(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = " ".join(value.strip().split())
+        return cleaned or None
 
 
 def _normalize(value: str | None) -> str:
@@ -129,17 +138,41 @@ def apply_wizard(
 ) -> dict[str, Any]:
     """Translate a validated wizard request into a single-transaction write."""
     name = request.service.name
+    original_name = request.original_name if request.mode == "edit" else None
+    lookup_name = original_name or name
+    normalized_new = _normalize(name)
+    normalized_original = _normalize(original_name) if original_name else None
     rules = db.list_rules(business_id)
 
     offered_rule = _find_offered_rule(rules)
     offered_list: list[str] = list(offered_rule["config"]["services"]) if offered_rule else []
     offered_normalized = {_normalize(item) for item in offered_list}
 
-    if request.mode == "create" and _normalize(name) in offered_normalized:
+    if request.mode == "create" and normalized_new in offered_normalized:
         raise ValueError(f'service "{name}" already exists; switch to edit mode')
+    if (
+        request.mode == "edit"
+        and normalized_original
+        and normalized_new != normalized_original
+        and normalized_new in offered_normalized
+    ):
+        raise ValueError(
+            f'cannot rename to "{name}" — another service already uses that name'
+        )
 
-    updated_offered = list(offered_list)
-    if _normalize(name) not in offered_normalized:
+    updated_offered: list[str] = []
+    seen: set[str] = set()
+    for item in offered_list:
+        if normalized_original and _normalize(item) == normalized_original:
+            replacement = name
+        else:
+            replacement = item
+        key = _normalize(replacement)
+        if key in seen:
+            continue
+        seen.add(key)
+        updated_offered.append(replacement)
+    if normalized_new not in seen:
         updated_offered.append(name)
 
     new_offered_payload: dict[str, Any] | None = None
@@ -210,7 +243,7 @@ def apply_wizard(
         }
     )
 
-    scoped_ids_to_delete = _scoped_rule_ids(rules, name)
+    scoped_ids_to_delete = _scoped_rule_ids(rules, lookup_name)
 
     created, deleted = db.apply_service_wizard(
         business_id=business_id,

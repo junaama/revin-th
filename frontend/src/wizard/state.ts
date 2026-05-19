@@ -39,6 +39,25 @@ export type WizardForm = {
   };
 };
 
+export type BusinessDefaults = {
+  serviceArea: {
+    configured: boolean;
+    zipCodes: string[];
+    cities: string[];
+  };
+  availability: {
+    configured: boolean;
+    timezone: string;
+    windows: HoursWindowDraft[];
+    exceptions: ExceptionDraft[];
+  };
+  bookingPolicy: {
+    configured: boolean;
+    minLeadMinutes: number;
+    maxAdvanceDays: number;
+  };
+};
+
 export type WizardStep = 0 | 1 | 2 | 3 | 4 | 5;
 
 export const WIZARD_STEP_TITLES: Record<WizardStep, string> = {
@@ -91,7 +110,7 @@ function makeId(): string {
   return `draft-${crypto.randomUUID()}`;
 }
 
-export function makeEmptyForm(): WizardForm {
+export function makeEmptyForm(defaults?: BusinessDefaults): WizardForm {
   return {
     name: "",
     serviceArea: {
@@ -105,8 +124,8 @@ export function makeEmptyForm(): WizardForm {
       exceptions: [],
     },
     bookingPolicy: {
-      minLeadMinutes: 120,
-      maxAdvanceDays: 30,
+      minLeadMinutes: defaults?.bookingPolicy.minLeadMinutes ?? 120,
+      maxAdvanceDays: defaults?.bookingPolicy.maxAdvanceDays ?? 30,
     },
   };
 }
@@ -294,12 +313,112 @@ function timeToHHMM(value: unknown): string {
   return value.slice(0, 5);
 }
 
-export function deriveFormFromRules(serviceName: string, rules: RuleRecord[]): WizardForm {
-  const form = makeEmptyForm();
+function isDefaultRule(rule: RuleRecord): boolean {
+  return rule.enabled && !(rule.config as { service?: string }).service;
+}
+
+function defaultRule(rules: RuleRecord[], type: RuleRecord["type"]): RuleRecord | undefined {
+  return rules.find((rule) => rule.type === type && isDefaultRule(rule));
+}
+
+function mapWindows(
+  windows: Array<{ day: DayOfWeek; open_time: string; close_time: string }> | undefined,
+): HoursWindowDraft[] {
+  return (windows ?? []).map((window) => ({
+    id: makeId(),
+    day: window.day,
+    openTime: timeToHHMM(window.open_time),
+    closeTime: timeToHHMM(window.close_time),
+  }));
+}
+
+function mapExceptions(
+  exceptions:
+    | Array<{
+        start_date?: string;
+        end_date?: string;
+        start?: string;
+        end?: string;
+        reason?: string;
+        label?: string;
+      }>
+    | undefined,
+): ExceptionDraft[] {
+  return (exceptions ?? []).map((entry) => {
+    const start = entry.start ?? (entry.start_date ? `${entry.start_date}T00:00` : "");
+    const end = entry.end ?? (entry.end_date ? `${entry.end_date}T23:59` : "");
+    return {
+      id: makeId(),
+      label: entry.label ?? entry.reason ?? "",
+      start: start.slice(0, 16),
+      end: end.slice(0, 16),
+    };
+  });
+}
+
+export function getBusinessDefaults(
+  rules: RuleRecord[],
+  fallbackTimezone = "America/Chicago",
+): BusinessDefaults {
+  const areaRule = defaultRule(rules, "service_area");
+  const areaConfig = areaRule?.config as
+    | { zip_codes?: string[]; cities?: string[] }
+    | undefined;
+
+  const hoursRule = defaultRule(rules, "business_hours");
+  const hoursConfig = hoursRule?.config as
+    | {
+        timezone?: string;
+        windows?: Array<{ day: DayOfWeek; open_time: string; close_time: string }>;
+        exceptions?: Array<{
+          start_date?: string;
+          end_date?: string;
+          start?: string;
+          end?: string;
+          reason?: string;
+          label?: string;
+        }>;
+      }
+    | undefined;
+
+  const policyRule = defaultRule(rules, "booking_policy");
+  const policyConfig = policyRule?.config as
+    | { min_lead_minutes?: number; max_advance_days?: number }
+    | undefined;
+
+  return {
+    serviceArea: {
+      configured: Boolean(areaRule),
+      zipCodes: areaConfig?.zip_codes ?? [],
+      cities: areaConfig?.cities ?? [],
+    },
+    availability: {
+      configured: Boolean(hoursRule),
+      timezone: hoursConfig?.timezone ?? fallbackTimezone,
+      windows: mapWindows(hoursConfig?.windows),
+      exceptions: mapExceptions(hoursConfig?.exceptions),
+    },
+    bookingPolicy: {
+      configured: Boolean(policyRule),
+      minLeadMinutes: policyConfig?.min_lead_minutes ?? 120,
+      maxAdvanceDays: policyConfig?.max_advance_days ?? 30,
+    },
+  };
+}
+
+export function deriveFormFromRules(
+  serviceName: string,
+  rules: RuleRecord[],
+  defaults?: BusinessDefaults,
+): WizardForm {
+  const form = makeEmptyForm(defaults);
   form.name = serviceName;
 
   const areaRule = rules.find(
-    (r) => r.type === "service_area" && (r.config as { service?: string }).service === serviceName,
+    (r) =>
+      r.enabled &&
+      r.type === "service_area" &&
+      (r.config as { service?: string }).service === serviceName,
   );
   if (areaRule) {
     const cfg = areaRule.config as { zip_codes?: string[]; cities?: string[] };
@@ -312,7 +431,9 @@ export function deriveFormFromRules(serviceName: string, rules: RuleRecord[]): W
 
   const hoursRule = rules.find(
     (r) =>
-      r.type === "business_hours" && (r.config as { service?: string }).service === serviceName,
+      r.enabled &&
+      r.type === "business_hours" &&
+      (r.config as { service?: string }).service === serviceName,
   );
   if (hoursRule) {
     const cfg = hoursRule.config as {
@@ -328,28 +449,16 @@ export function deriveFormFromRules(serviceName: string, rules: RuleRecord[]): W
     };
     form.availability = {
       inheritDefault: false,
-      windows: (cfg.windows ?? []).map((w) => ({
-        id: makeId(),
-        day: w.day,
-        openTime: timeToHHMM(w.open_time),
-        closeTime: timeToHHMM(w.close_time),
-      })),
-      exceptions: (cfg.exceptions ?? []).map((e) => {
-        const start = e.start ?? (e.start_date ? `${e.start_date}T00:00` : "");
-        const end = e.end ?? (e.end_date ? `${e.end_date}T23:59` : "");
-        return {
-          id: makeId(),
-          label: e.label ?? e.reason ?? "",
-          start: start.slice(0, 16),
-          end: end.slice(0, 16),
-        };
-      }),
+      windows: mapWindows(cfg.windows),
+      exceptions: mapExceptions(cfg.exceptions),
     };
   }
 
   const policyRule = rules.find(
     (r) =>
-      r.type === "booking_policy" && (r.config as { service?: string }).service === serviceName,
+      r.enabled &&
+      r.type === "booking_policy" &&
+      (r.config as { service?: string }).service === serviceName,
   );
   if (policyRule) {
     const cfg = policyRule.config as { min_lead_minutes?: number; max_advance_days?: number };
@@ -363,9 +472,10 @@ export function deriveFormFromRules(serviceName: string, rules: RuleRecord[]): W
 }
 
 export function buildPayload(state: WizardState): ServiceWizardPayload {
-  const { form, mode } = state;
+  const { form, mode, originalName } = state;
   return {
     mode,
+    ...(originalName ? { original_name: originalName } : {}),
     service: {
       name: form.name.trim(),
       service_area: {
@@ -411,7 +521,7 @@ export function validateStep(state: WizardState, step: WizardStep): WizardFieldE
       errors.push({
         step: 1,
         field: "service_area",
-        message: "Add at least one zip code or city, or inherit the business default.",
+        message: "Add at least one zip code or city, or use the default service area.",
       });
     }
     for (const zip of form.serviceArea.zipCodes) {
@@ -437,7 +547,7 @@ export function validateStep(state: WizardState, step: WizardStep): WizardFieldE
       errors.push({
         step: 2,
         field: "windows",
-        message: "Add at least one open window, or inherit the business default.",
+        message: "Add at least one open window, or use the default availability.",
       });
     }
     for (const w of form.availability.windows) {
@@ -509,7 +619,7 @@ export function describePayload(payload: ServiceWizardPayload, mode: WizardMode)
   }
 
   if (service.service_area.inherit_default) {
-    lines.push("Service area: inherit business default (no per-service rule)");
+    lines.push("Service area: use default service area (no per-service rule)");
   } else {
     const parts: string[] = [];
     if (service.service_area.zip_codes.length > 0) {
@@ -522,7 +632,7 @@ export function describePayload(payload: ServiceWizardPayload, mode: WizardMode)
   }
 
   if (service.availability.inherit_default) {
-    lines.push("Availability: inherit business default");
+    lines.push("Availability: use default availability");
     if (service.availability.exceptions.length > 0) {
       lines.push(
         `${verb} business_hours rule (service=${service.name}, ${service.availability.exceptions.length} exception(s) only)`,

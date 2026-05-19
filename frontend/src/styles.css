@@ -3,12 +3,12 @@
 @tailwind utilities;
 
 :root {
-  --paper: #f7f5ef;
+  --paper: #f6f8f7;
   --ink: #18211f;
   --muted: #69746f;
   --muted-strong: #44504b;
-  --line: #d8ddd5;
-  --wash: #f4f7f2;
+  --line: #d8e1dc;
+  --wash: #eef4f1;
   --focus: #0f766e;
   --focus-dark: #115e59;
   --amber: #9a5b12;
@@ -26,8 +26,8 @@
 body {
   margin: 0;
   background:
-    linear-gradient(90deg, rgba(24, 33, 31, 0.04) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(24, 33, 31, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(24, 33, 31, 0.035) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(24, 33, 31, 0.03) 1px, transparent 1px),
     var(--paper);
   background-size: 28px 28px;
 }

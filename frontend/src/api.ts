@@ -49,6 +49,7 @@ export type DayOfWeek =
 
 export type ServiceWizardPayload = {
   mode: "create" | "edit";
+  original_name?: string;
   service: {
     name: string;
     service_area: {

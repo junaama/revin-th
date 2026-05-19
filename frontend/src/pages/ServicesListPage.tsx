@@ -7,6 +7,7 @@ import {
   listBusinesses,
   listRules,
 } from "../api";
+import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import {
   Card,
@@ -146,10 +147,27 @@ export function ServicesListPage() {
                   className="flex flex-wrap items-center justify-between gap-3 px-4 py-4"
                 >
                   <div className="min-w-0">
-                    <h3 className="text-sm font-semibold capitalize">{service.name}</h3>
-                    <p className="mt-1 text-xs text-[var(--muted)]">
-                      {summarizeBadges(service)}
-                    </p>
+                    <h3 className="text-base font-semibold capitalize">{service.name}</h3>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <ServiceStatusBadge
+                        label="Service area"
+                        active={service.hasServiceArea}
+                        activeText="Custom"
+                        inactiveText="Default"
+                      />
+                      <ServiceStatusBadge
+                        label="Availability"
+                        active={service.hasAvailability}
+                        activeText="Custom"
+                        inactiveText="Default"
+                      />
+                      <ServiceStatusBadge
+                        label="Booking policy"
+                        active={service.hasBookingPolicy}
+                        activeText="Set"
+                        inactiveText="Default"
+                      />
+                    </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <Button asChild size="sm" variant="outline">
@@ -178,10 +196,20 @@ export function ServicesListPage() {
   );
 }
 
-function summarizeBadges(service: ServiceSummary): string {
-  const parts: string[] = [];
-  parts.push(service.hasServiceArea ? "service area: custom" : "service area: inherit");
-  parts.push(service.hasAvailability ? "availability: custom" : "availability: inherit");
-  parts.push(service.hasBookingPolicy ? "booking policy: set" : "booking policy: default");
-  return parts.join(" · ");
+function ServiceStatusBadge({
+  active,
+  activeText,
+  inactiveText,
+  label,
+}: {
+  active: boolean;
+  activeText: string;
+  inactiveText: string;
+  label: string;
+}) {
+  return (
+    <Badge variant={active ? "success" : "secondary"}>
+      {label}: {active ? activeText : inactiveText}
+    </Badge>
+  );
 }

@@ -1,13 +1,20 @@
 import {
   AlertTriangle,
+  ArrowLeft,
+  CalendarClock,
   CheckCircle2,
+  Code2,
   ExternalLink,
+  MapPin,
+  Pencil,
   Plus,
   RefreshCw,
   Send,
+  SlidersHorizontal,
   ShieldAlert,
   Store,
   Trash2,
+  Wrench,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
@@ -17,6 +24,7 @@ import {
   ChatMessage,
   RuleRecord,
   createRule,
+  deleteService,
   deleteRule,
   listAuditLog,
   listBusinesses,
@@ -52,11 +60,18 @@ import {
   TableHeader,
   TableRow,
 } from "./components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { Textarea } from "./components/ui/textarea";
-import { ServicesListPage } from "./pages/ServicesListPage";
-import { ServiceWizardPage } from "./pages/ServiceWizardPage";
+import { ServiceRuleWizardDialog } from "./components/ServiceRuleWizardDialog";
+import { formatRuleType, presentRule, type RulePresentation } from "./rules/presentation";
+import { ServiceSummary, getServiceSummaries } from "./wizard/state";
 
 type OutcomeFilter = "all" | AuditEntry["outcome"];
+type DashboardTab = "rules" | "audit";
+type ServiceWizardIntent = {
+  mode: "create" | "edit";
+  serviceName: string | null;
+} | null;
 
 const starterMessages: ChatMessage[] = [
   {
@@ -81,16 +96,16 @@ export function App() {
     const businessId = decodeURIComponent(path.split("/")[2] ?? "");
     return <CustomerChatPage businessId={businessId} />;
   }
-  if (path === "/dashboard/services") {
-    return <ServicesListPage />;
-  }
   if (path === "/dashboard/services/new") {
-    return <ServiceWizardPage mode="create" serviceName={null} />;
+    return <OwnerDashboardPage initialWizard={{ mode: "create", serviceName: null }} />;
   }
   const editMatch = path.match(/^\/dashboard\/services\/([^/]+)\/edit$/);
   if (editMatch) {
     const name = decodeURIComponent(editMatch[1]);
-    return <ServiceWizardPage mode="edit" serviceName={name} />;
+    return <OwnerDashboardPage initialWizard={{ mode: "edit", serviceName: name }} />;
+  }
+  if (path === "/dashboard/services") {
+    return <OwnerDashboardPage />;
   }
   if (path === "/dashboard") {
     return <OwnerDashboardPage />;
@@ -223,7 +238,15 @@ function CustomerChatPage({ businessId }: { businessId: string }) {
     <Shell
       eyebrow={business?.name ?? businessId}
       title="Customer chat"
-      actions={<NavLink href="/dashboard">Owner dashboard</NavLink>}
+      actions={
+        <div className="flex flex-wrap items-center gap-2">
+          <NavLink href="/">
+            <ArrowLeft className="h-3.5 w-3.5" />
+            Change business
+          </NavLink>
+          <NavLink href="/dashboard">Owner dashboard</NavLink>
+        </div>
+      }
     >
       {error ? <ErrorBanner message={error} /> : null}
       <Card className="mx-auto flex min-h-[calc(100vh-170px)] w-full max-w-3xl flex-col">
@@ -266,7 +289,11 @@ function CustomerChatPage({ businessId }: { businessId: string }) {
   );
 }
 
-function OwnerDashboardPage() {
+function OwnerDashboardPage({
+  initialWizard = null,
+}: {
+  initialWizard?: ServiceWizardIntent;
+}) {
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [businessId, setBusinessId] = useState("");
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
@@ -275,11 +302,14 @@ function OwnerDashboardPage() {
   const [ruleDraft, setRuleDraft] = useState(defaultRuleJson);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<DashboardTab>("rules");
+  const [wizardIntent, setWizardIntent] = useState<ServiceWizardIntent>(initialWizard);
 
   const selectedBusiness = useMemo(
     () => businesses.find((business) => business.id === businessId),
     [businessId, businesses],
   );
+  const services = useMemo<ServiceSummary[]>(() => getServiceSummaries(rules), [rules]);
 
   useEffect(() => {
     listBusinesses()
@@ -356,13 +386,39 @@ function OwnerDashboardPage() {
     }
   }
 
+  async function handleDeleteServiceRule(service: ServiceSummary) {
+    if (!confirm(`Delete all rules for "${service.name}"? This cannot be undone.`)) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await deleteService(businessId, service.name);
+      await refreshOwnerData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Service rule delete failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function openServiceWizard(intent: NonNullable<ServiceWizardIntent>) {
+    setActiveTab("rules");
+    setWizardIntent(intent);
+  }
+
+  function handleWizardOpenChange(open: boolean) {
+    if (open || !wizardIntent) return;
+    setWizardIntent(null);
+    if (window.location.pathname.startsWith("/dashboard/services")) {
+      window.history.replaceState(null, "", "/dashboard");
+    }
+  }
+
   return (
     <Shell
       eyebrow="Owner dashboard"
       title={selectedBusiness?.name ?? "Business controls"}
       actions={
         <div className="flex flex-wrap items-center gap-2">
-          <NavLink href="/dashboard/services">Services</NavLink>
           {businessId ? (
             <NavLink href={`/chat/${businessId}`}>
               Customer chat <ExternalLink className="h-3.5 w-3.5" />
@@ -391,24 +447,53 @@ function OwnerDashboardPage() {
       }
     >
       {error ? <ErrorBanner message={error} /> : null}
-      <div className="grid gap-5 py-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(380px,0.8fr)]">
-        <AuditLogPanel
-          auditLog={auditLog}
-          busy={busy}
-          filter={filter}
-          onFilter={setFilter}
-          onRefresh={refreshOwnerData}
-        />
-        <RulesPanel
-          busy={busy}
-          rules={rules}
-          ruleDraft={ruleDraft}
-          onRuleDraft={setRuleDraft}
-          onCreateRule={handleCreateRule}
-          onToggleRule={handleToggleRule}
-          onDeleteRule={handleDeleteRule}
-        />
-      </div>
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as DashboardTab)}>
+        <div className="flex flex-col gap-3 pt-5 sm:flex-row sm:items-center sm:justify-between">
+          <TabsList aria-label="Dashboard sections">
+            <TabsTrigger value="rules">Configured rules</TabsTrigger>
+            <TabsTrigger value="audit">Audit log</TabsTrigger>
+          </TabsList>
+          <p className="text-sm text-[var(--muted)]">
+            Configure what the agent can offer, then review decisions it blocked or flagged.
+          </p>
+        </div>
+        <TabsContent value="rules">
+          <RulesPanel
+            busy={busy}
+            rules={rules}
+            services={services}
+            ruleDraft={ruleDraft}
+            onRuleDraft={setRuleDraft}
+            onCreateRule={handleCreateRule}
+            onToggleRule={handleToggleRule}
+            onDeleteRule={handleDeleteRule}
+            onDeleteServiceRule={handleDeleteServiceRule}
+            onAddServiceRule={() => openServiceWizard({ mode: "create", serviceName: null })}
+            onEditServiceRule={(service) =>
+              openServiceWizard({ mode: "edit", serviceName: service.name })
+            }
+          />
+        </TabsContent>
+        <TabsContent value="audit">
+          <AuditLogPanel
+            auditLog={auditLog}
+            busy={busy}
+            filter={filter}
+            onFilter={setFilter}
+            onRefresh={refreshOwnerData}
+          />
+        </TabsContent>
+      </Tabs>
+      <ServiceRuleWizardDialog
+        businessId={businessId}
+        businessName={selectedBusiness?.name}
+        mode={wizardIntent?.mode ?? "create"}
+        onOpenChange={handleWizardOpenChange}
+        onSaved={refreshOwnerData}
+        open={Boolean(wizardIntent)}
+        serviceName={wizardIntent?.serviceName}
+        timezone={selectedBusiness?.timezone ?? "America/Chicago"}
+      />
     </Shell>
   );
 }
@@ -470,8 +555,8 @@ function AuditLogPanel({
                 <TableCell>
                   <OutcomeBadge outcome={entry.outcome} />
                 </TableCell>
-                <TableCell className="font-mono text-xs">
-                  {String(entry.action_proposed.type ?? "action")}
+                <TableCell className="text-sm font-medium">
+                  {formatRuleType(String(entry.action_proposed.type ?? "action"))}
                 </TableCell>
                 <TableCell className="max-w-[360px] text-[var(--muted-strong)]">
                   {entry.violations[0]?.reason ?? "Allowed"}
@@ -498,83 +583,323 @@ function AuditLogPanel({
 function RulesPanel({
   busy,
   rules,
+  services,
   ruleDraft,
   onRuleDraft,
   onCreateRule,
   onToggleRule,
   onDeleteRule,
+  onDeleteServiceRule,
+  onAddServiceRule,
+  onEditServiceRule,
 }: {
   busy: boolean;
   rules: RuleRecord[];
+  services: ServiceSummary[];
   ruleDraft: string;
   onRuleDraft: (value: string) => void;
   onCreateRule: (event: FormEvent<HTMLFormElement>) => void;
   onToggleRule: (rule: RuleRecord) => void;
   onDeleteRule: (rule: RuleRecord) => void;
+  onDeleteServiceRule: (service: ServiceSummary) => void;
+  onAddServiceRule: () => void;
+  onEditServiceRule: (service: ServiceSummary) => void;
+}) {
+  const defaultRules = rules.filter((rule) => !(rule.config as { service?: string }).service);
+  return (
+    <section className="grid gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(420px,1.1fr)]">
+      <div className="rounded-lg border border-[var(--line)] bg-white p-4 shadow-rule">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-base font-semibold">Default rules</h2>
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              Used for every service unless a service-specific rule overrides them.
+            </p>
+          </div>
+          <Badge variant="secondary">{defaultRules.length} configured</Badge>
+        </div>
+
+        <div className="mt-4 space-y-3">
+          {defaultRules.map((rule) => (
+            <RuleCard
+              busy={busy}
+              key={rule.id}
+              onDeleteRule={onDeleteRule}
+              onToggleRule={onToggleRule}
+              rule={rule}
+            />
+          ))}
+          {!defaultRules.length ? (
+            <div className="rounded-lg border border-dashed border-[var(--line)] bg-white p-8 text-center text-sm text-[var(--muted)]">
+              No default rules configured yet.
+            </div>
+          ) : null}
+          <AdvancedRuleJsonForm
+            busy={busy}
+            ruleDraft={ruleDraft}
+            onCreateRule={onCreateRule}
+            onRuleDraft={onRuleDraft}
+          />
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-[var(--line)] bg-white p-4 shadow-rule">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-base font-semibold">Service-specific rules</h2>
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              Add or edit exceptions for one service without leaving the dashboard.
+            </p>
+          </div>
+          <Button type="button" onClick={onAddServiceRule}>
+            <Plus className="h-4 w-4" />
+            Add rule
+          </Button>
+        </div>
+
+        {services.length === 0 ? (
+          <div className="mt-4 rounded-lg border border-dashed border-[var(--line)] bg-[var(--wash)] p-8 text-center text-sm text-[var(--muted)]">
+            No service-specific rules yet.
+          </div>
+        ) : (
+          <ul className="mt-4 divide-y divide-[var(--line)] rounded-lg border border-[var(--line)]">
+            {services.map((service) => (
+              <li
+                key={service.name}
+                className="flex flex-col gap-3 bg-white px-4 py-4 first:rounded-t-lg last:rounded-b-lg sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="min-w-0">
+                  <h3 className="text-base font-semibold capitalize">{service.name}</h3>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    <ServiceStatusBadge
+                      label="Service area"
+                      active={service.hasServiceArea}
+                      activeText="Custom"
+                      inactiveText="Default"
+                    />
+                    <ServiceStatusBadge
+                      label="Availability"
+                      active={service.hasAvailability}
+                      activeText="Custom"
+                      inactiveText="Default"
+                    />
+                    <ServiceStatusBadge
+                      label="Booking policy"
+                      active={service.hasBookingPolicy}
+                      activeText="Custom"
+                      inactiveText="Default"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => onEditServiceRule(service)}
+                  >
+                    <Pencil className="h-3.5 w-3.5" /> Edit rule
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => onDeleteServiceRule(service)}
+                    disabled={busy}
+                    title="Delete service rules"
+                    size="icon"
+                    variant="outline"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ServiceStatusBadge({
+  active,
+  activeText,
+  inactiveText,
+  label,
+}: {
+  active: boolean;
+  activeText: string;
+  inactiveText: string;
+  label: string;
 }) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Rules</CardTitle>
-        <CardDescription>{rules.length} configured</CardDescription>
-      </CardHeader>
+    <Badge variant={active ? "success" : "secondary"}>
+      {label}: {active ? activeText : inactiveText}
+    </Badge>
+  );
+}
 
-      <CardContent className="divide-y divide-[var(--line)] p-0">
-        {rules.map((rule) => (
-          <article className="p-4" key={rule.id}>
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="font-mono text-xs text-[var(--muted)]">{rule.id}</p>
-                <h3 className="mt-1 text-sm font-semibold">{rule.type}</h3>
-              </div>
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id={`enabled-${rule.id}`}
-                  checked={rule.enabled}
-                  disabled={busy}
-                  onCheckedChange={() => onToggleRule(rule)}
-                />
-                <Label
-                  htmlFor={`enabled-${rule.id}`}
-                  className="text-xs font-semibold text-[var(--muted-strong)]"
-                >
-                  Enabled
-                </Label>
-                <IconButton label="Delete rule" onClick={() => onDeleteRule(rule)} disabled={busy}>
-                  <Trash2 className="h-4 w-4" />
-                </IconButton>
-              </div>
+function RuleCard({
+  busy,
+  onDeleteRule,
+  onToggleRule,
+  rule,
+}: {
+  busy: boolean;
+  onDeleteRule: (rule: RuleRecord) => void;
+  onToggleRule: (rule: RuleRecord) => void;
+  rule: RuleRecord;
+}) {
+  const presentation = presentRule(rule);
+
+  return (
+    <article className="rounded-lg border border-[var(--line)] bg-white p-4 shadow-rule">
+      <div className="flex flex-col gap-4">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-[var(--wash)] text-[var(--focus)]">
+            <RuleIcon type={rule.type} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-base font-semibold leading-tight">{presentation.title}</h3>
+              <Badge variant={rule.enabled ? "success" : "secondary"}>
+                {rule.enabled ? "Enabled" : "Paused"}
+              </Badge>
             </div>
-            <pre className="mt-3 max-h-44 overflow-auto rounded-md bg-[var(--wash)] p-3 text-xs leading-5 text-[var(--muted-strong)]">
-              {JSON.stringify(rule.config, null, 2)}
-            </pre>
-          </article>
-        ))}
-      </CardContent>
+            <p className="mt-1 text-sm text-[var(--muted)]">{presentation.subtitle}</p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id={`enabled-${rule.id}`}
+                checked={rule.enabled}
+                disabled={busy}
+                onCheckedChange={() => onToggleRule(rule)}
+              />
+              <Label
+                htmlFor={`enabled-${rule.id}`}
+                className="hidden text-xs font-semibold text-[var(--muted-strong)] sm:inline"
+              >
+                Enabled
+              </Label>
+            </div>
+            <Button
+              aria-label={`Delete ${presentation.title}`}
+              disabled={busy}
+              onClick={() => onDeleteRule(rule)}
+              size="icon"
+              title="Delete rule"
+              type="button"
+              variant="ghost"
+              className="text-[var(--muted)] hover:bg-[var(--red-soft)] hover:text-[var(--red)]"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
 
-      <CardFooter>
-      <form className="w-full" onSubmit={onCreateRule}>
-        <Label htmlFor="rule-json">
-          New rule JSON
-        </Label>
+        <div className="space-y-3">
+          <p className="text-sm leading-6 text-[var(--muted-strong)]">{presentation.summary}</p>
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline">{presentation.scope}</Badge>
+            {presentation.chips.map((chip) => (
+              <Badge key={chip.label} variant={chip.tone ?? "secondary"}>
+                {chip.label}
+              </Badge>
+            ))}
+          </div>
+          {presentation.metrics.length ? <RuleMetrics presentation={presentation} /> : null}
+          {presentation.details.length || presentation.warning ? (
+            <div className="space-y-1.5 rounded-md bg-[var(--wash)] p-3 text-sm text-[var(--muted-strong)]">
+              {presentation.warning ? (
+                <p className="font-semibold text-[var(--amber)]">{presentation.warning}</p>
+              ) : null}
+              {presentation.details.map((detail) => (
+                <p key={detail}>{detail}</p>
+              ))}
+            </div>
+          ) : null}
+        </div>
+
+        <TechnicalDetails rule={rule} />
+      </div>
+    </article>
+  );
+}
+
+function RuleMetrics({ presentation }: { presentation: RulePresentation }) {
+  return (
+    <dl className="grid gap-2 sm:grid-cols-2">
+      {presentation.metrics.map((metric) => (
+        <div
+          key={metric.label}
+          className="rounded-md border border-[var(--line)] bg-[var(--wash)] px-3 py-2"
+        >
+          <dt className="text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
+            {metric.label}
+          </dt>
+          <dd className="mt-1 text-sm font-semibold text-[var(--ink)]">{metric.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function TechnicalDetails({ rule }: { rule: RuleRecord }) {
+  return (
+    <details className="group border-t border-[var(--line)] pt-3 text-xs text-[var(--muted)]">
+      <summary className="inline-flex cursor-pointer select-none items-center gap-2 rounded-md px-0 py-1 font-semibold text-[var(--muted-strong)]">
+        <Code2 className="h-3.5 w-3.5" />
+        Technical details
+      </summary>
+      <div className="mt-2 space-y-2">
+        <p className="font-mono text-[0.7rem] text-[var(--muted)]">{rule.id}</p>
+        <pre className="max-h-56 overflow-auto rounded-md bg-[var(--wash)] p-3 text-xs leading-5 text-[var(--muted-strong)]">
+          {JSON.stringify(rule.config, null, 2)}
+        </pre>
+      </div>
+    </details>
+  );
+}
+
+function AdvancedRuleJsonForm({
+  busy,
+  onCreateRule,
+  onRuleDraft,
+  ruleDraft,
+}: {
+  busy: boolean;
+  onCreateRule: (event: FormEvent<HTMLFormElement>) => void;
+  onRuleDraft: (value: string) => void;
+  ruleDraft: string;
+}) {
+  return (
+    <details className="rounded-lg border border-dashed border-[var(--line)] bg-white p-4 text-sm shadow-rule">
+      <summary className="cursor-pointer select-none font-semibold text-[var(--muted-strong)]">
+        Advanced: add raw JSON rule
+      </summary>
+      <form className="mt-4" onSubmit={onCreateRule}>
+        <Label htmlFor="rule-json">Rule JSON</Label>
         <Textarea
           className="mt-2 h-44 resize-y font-mono text-xs"
           id="rule-json"
           onChange={(event) => onRuleDraft(event.target.value)}
           value={ruleDraft}
         />
-        <Button
-          className="mt-3"
-          disabled={busy}
-          type="submit"
-        >
+        <Button className="mt-3" disabled={busy} type="submit" size="sm">
           <Plus className="h-4 w-4" />
           Add rule
         </Button>
       </form>
-      </CardFooter>
-    </Card>
+    </details>
   );
+}
+
+function RuleIcon({ type }: { type: RuleRecord["type"] }) {
+  if (type === "services_offered") return <Wrench className="h-5 w-5" />;
+  if (type === "service_area") return <MapPin className="h-5 w-5" />;
+  if (type === "business_hours") return <CalendarClock className="h-5 w-5" />;
+  if (type === "booking_policy") return <SlidersHorizontal className="h-5 w-5" />;
+  return <Code2 className="h-5 w-5" />;
 }
 
 function Shell({

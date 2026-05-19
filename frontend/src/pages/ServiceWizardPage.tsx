@@ -2,6 +2,7 @@ import { ArrowLeft, ArrowRight, Check } from "lucide-react";
 import { useEffect, useMemo, useReducer, useState } from "react";
 import {
   Business,
+  RuleRecord,
   listBusinesses,
   listRules,
   submitServiceWizard,
@@ -14,6 +15,7 @@ import {
   WizardStep,
   buildPayload,
   deriveFormFromRules,
+  getBusinessDefaults,
   makeEmptyForm,
   makeInitialState,
   validateStep,
@@ -31,6 +33,7 @@ type Props = {
 export function ServiceWizardPage({ mode, serviceName }: Props) {
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [businessId, setBusinessId] = useState("");
+  const [rules, setRules] = useState<RuleRecord[]>([]);
   const [bootstrap, setBootstrap] = useState<{ loading: boolean; error: string | null }>({
     loading: true,
     error: null,
@@ -50,6 +53,10 @@ export function ServiceWizardPage({ mode, serviceName }: Props) {
     () => businesses.find((b) => b.id === businessId),
     [businessId, businesses],
   );
+  const defaults = useMemo(
+    () => getBusinessDefaults(rules, business?.timezone ?? "America/Chicago"),
+    [business?.timezone, rules],
+  );
 
   useEffect(() => {
     listBusinesses()
@@ -66,19 +73,23 @@ export function ServiceWizardPage({ mode, serviceName }: Props) {
     if (!businessId) return;
     setBootstrap({ loading: true, error: null });
 
-    if (mode === "create") {
-      dispatch({ kind: "reset", state: makeInitialState("create", makeEmptyForm(), null) });
-      setBootstrap({ loading: false, error: null });
-      return;
-    }
-
     listRules(businessId)
       .then((rules) => {
+        setRules(rules);
+        const nextDefaults = getBusinessDefaults(rules, business?.timezone ?? "America/Chicago");
+        if (mode === "create") {
+          dispatch({
+            kind: "reset",
+            state: makeInitialState("create", makeEmptyForm(nextDefaults), null),
+          });
+          setBootstrap({ loading: false, error: null });
+          return;
+        }
         if (!serviceName) {
           setBootstrap({ loading: false, error: "Missing service name." });
           return;
         }
-        const form = deriveFormFromRules(serviceName, rules);
+        const form = deriveFormFromRules(serviceName, rules, nextDefaults);
         dispatch({ kind: "reset", state: makeInitialState("edit", form, serviceName) });
         setBootstrap({ loading: false, error: null });
       })
@@ -88,7 +99,7 @@ export function ServiceWizardPage({ mode, serviceName }: Props) {
           error: err instanceof Error ? err.message : "Failed to load service",
         }),
       );
-  }, [businessId, mode, serviceName]);
+  }, [business?.timezone, businessId, mode, serviceName]);
 
   const payload = useMemo(() => buildPayload(state), [state]);
 
@@ -187,21 +198,22 @@ export function ServiceWizardPage({ mode, serviceName }: Props) {
         ) : null}
 
         <Card className="mt-5">
-          <CardContent className="p-5">
+          <CardContent className="p-4 sm:p-6">
             {bootstrap.loading ? (
               <p className="text-sm text-[var(--muted)]">Loading…</p>
             ) : (
               stepRender({
-                state,
-                dispatch,
-                timezone: business?.timezone ?? "America/Chicago",
-                payload,
-              })
-            )}
+              state,
+              dispatch,
+              timezone: business?.timezone ?? "America/Chicago",
+              defaults,
+              payload,
+            })
+          )}
           </CardContent>
         </Card>
 
-        <footer className="mt-5 flex flex-wrap items-center justify-between gap-3">
+        <footer className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--line)] bg-white p-3 shadow-rule">
           <Button
             type="button"
             onClick={handleBack}
@@ -240,7 +252,7 @@ export function ServiceWizardPage({ mode, serviceName }: Props) {
 function Stepper({ current }: { current: WizardStep }) {
   const steps = [0, 1, 2, 3, 4, 5] as const;
   return (
-    <ol className="mt-4 flex flex-wrap gap-1.5">
+    <ol className="mt-4 grid gap-1.5 sm:grid-cols-2 lg:grid-cols-6">
       {steps.map((step) => {
         const isActive = step === current;
         const isDone = step < current;
@@ -248,7 +260,7 @@ function Stepper({ current }: { current: WizardStep }) {
           <li
             key={step}
             className={[
-              "flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs font-semibold transition",
+              "flex min-h-10 items-center gap-2 rounded-md border px-3 py-1.5 text-xs font-semibold transition",
               isActive
                 ? "border-[var(--focus)] bg-[var(--focus)] text-white"
                 : isDone
