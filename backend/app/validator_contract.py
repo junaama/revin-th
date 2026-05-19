@@ -11,9 +11,9 @@ from __future__ import annotations
 from datetime import date, datetime, time
 from enum import Enum
 from typing import Annotated, Literal, Union
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import BaseModel, Field, TypeAdapter, field_validator, model_validator
 
 
 class DayOfWeek(str, Enum):
@@ -31,11 +31,23 @@ class HoursWindow(BaseModel):
     open_time: time
     close_time: time
 
+    @model_validator(mode="after")
+    def close_must_follow_open(self) -> "HoursWindow":
+        if self.close_time <= self.open_time:
+            raise ValueError("close_time must be after open_time")
+        return self
+
 
 class DateRange(BaseModel):
     start_date: date
     end_date: date
     reason: str | None = None
+
+    @model_validator(mode="after")
+    def end_must_follow_start(self) -> "DateRange":
+        if self.end_date < self.start_date:
+            raise ValueError("end_date must be on or after start_date")
+        return self
 
 
 class ServiceAreaRule(BaseModel):
@@ -53,6 +65,15 @@ class BusinessHoursRule(BaseModel):
     exceptions: list[DateRange] = Field(default_factory=list)
     timezone: str = "America/Chicago"
     service: str | None = None
+
+    @field_validator("timezone")
+    @classmethod
+    def timezone_must_exist(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(f"unknown timezone: {value}") from exc
+        return value
 
 
 class ServicesOfferedRule(BaseModel):
@@ -138,6 +159,9 @@ def evaluate(rules: list[Rule], action: ProposedAction) -> RuleDecision:
             violation = _check_business_hours(rule, action)
             if violation:
                 violations.append(violation)
+    elif isinstance(action, AnswerQuestion) and action.hours_claimed:
+        for rule in _applicable_rules(rules, "business_hours", service):
+            violations.extend(_check_hours_claims(rule, action.hours_claimed))
 
     if not violations:
         return RuleDecision(outcome="allowed")
@@ -208,16 +232,32 @@ def _check_service_area(rule: ServiceAreaRule, action: ProposedAction) -> list[V
 
     allowed_zips = {_normalize_zip(zip_code) for zip_code in rule.zip_codes}
     allowed_cities = {_normalize(city) for city in rule.cities}
+    checked_any_area = False
     rejected: list[str] = []
 
     for zip_code in zip_codes:
-        if allowed_zips and _normalize_zip(zip_code) not in allowed_zips:
-            rejected.append(f"zip {zip_code}")
+        if allowed_zips:
+            checked_any_area = True
+            if _normalize_zip(zip_code) not in allowed_zips:
+                rejected.append(f"zip {zip_code}")
     for city in cities:
-        if allowed_cities and _normalize(city) not in allowed_cities:
-            rejected.append(city)
+        if allowed_cities:
+            checked_any_area = True
+            if _normalize(city) not in allowed_cities:
+                rejected.append(city)
 
     if not rejected:
+        if not checked_any_area:
+            configured_by = "zip code" if allowed_zips else "city"
+            supplied_as = "city" if cities else "zip code"
+            return [
+                _violation(
+                    rule,
+                    f"Location was supplied as {supplied_as}, but service area is "
+                    f"configured by {configured_by}. The business owner should review area fit.",
+                    blocking=False,
+                )
+            ]
         return []
 
     served = ", ".join(rule.zip_codes + rule.cities)
@@ -274,6 +314,33 @@ def _check_business_hours(
     )
 
 
+def _check_hours_claims(
+    rule: BusinessHoursRule, claimed_windows: list[HoursWindow]
+) -> list[Violation]:
+    violations: list[Violation] = []
+    for claimed in claimed_windows:
+        configured_windows = [
+            window for window in rule.windows if window.day == claimed.day
+        ]
+        if any(_window_contains(configured, claimed) for configured in configured_windows):
+            continue
+
+        if configured_windows:
+            open_ranges = ", ".join(_format_window(window) for window in configured_windows)
+            reason = (
+                f"Claimed hours {_format_window(claimed)} on {claimed.day.value} "
+                f"are outside configured hours. Open {open_ranges}."
+            )
+        else:
+            reason = (
+                f"Claimed hours {_format_window(claimed)} on {claimed.day.value}, "
+                f"but this business is closed on {claimed.day.value}. "
+                f"Open {_format_open_days(rule.windows)}."
+            )
+        violations.append(_violation(rule, reason))
+    return violations
+
+
 def _services_from_action(action: ProposedAction) -> list[str]:
     if isinstance(action, (BookAppointment, QuoteService)):
         return [action.service]
@@ -308,6 +375,17 @@ def _format_open_days(windows: list[HoursWindow]) -> str:
     return ", ".join(seen)
 
 
+def _format_window(window: HoursWindow) -> str:
+    return f"{window.open_time.strftime('%H:%M')}-{window.close_time.strftime('%H:%M')}"
+
+
+def _window_contains(configured: HoursWindow, claimed: HoursWindow) -> bool:
+    return (
+        configured.open_time <= claimed.open_time
+        and claimed.close_time <= configured.close_time
+    )
+
+
 def _violation(
     rule: Rule,
     reason: str,
@@ -328,7 +406,10 @@ def _normalize(value: str | None) -> str:
 
 
 def _normalize_zip(value: str) -> str:
-    return value.strip()
+    stripped = value.strip()
+    if "-" in stripped and stripped.replace("-", "").isdigit():
+        return stripped.split("-", 1)[0]
+    return stripped
 
 
 def _same_text(left: str | None, right: str | None) -> bool:
