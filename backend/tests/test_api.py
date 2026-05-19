@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import datetime
+import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app import db
+from app import main as main_module
 from app.main import app
 from app.settings import settings
+from app.validator_contract import BookAppointment, ProposedAction, QuoteService, RuleDecision
 
 
 TOM_HEADERS = {"X-Business-Id": "biz_toms_hvac"}
@@ -172,3 +177,122 @@ def test_customer_routes_use_path_business_without_owner_header(
 
     assert response.status_code == 200
     assert response.json() == []
+
+
+@pytest.mark.parametrize(
+    ("action", "expected_outcome"),
+    [
+        (
+            BookAppointment(
+                service="hvac repair",
+                requested_at=datetime.fromisoformat("2026-05-25T10:00:00-05:00"),
+                zip_code="78704",
+            ),
+            "allowed",
+        ),
+        (
+            BookAppointment(
+                service="hvac repair",
+                requested_at=datetime.fromisoformat("2026-05-24T14:00:00-05:00"),
+                zip_code="78704",
+            ),
+            "blocked",
+        ),
+        (
+            QuoteService(service="hvac repair"),
+            "flagged",
+        ),
+    ],
+)
+def test_chat_stream_writes_messages_and_audit_for_validator_decisions(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    action: ProposedAction,
+    expected_outcome: str,
+) -> None:
+    async def fake_classify_action(**_: Any) -> ProposedAction:
+        return action
+
+    async def fake_synthesize_reply_stream(
+        *,
+        decision: RuleDecision,
+        **_: Any,
+    ):
+        if decision.violations:
+            yield decision.violations[0].reason
+        else:
+            yield "I can help move that forward."
+
+    monkeypatch.setattr(main_module, "classify_action", fake_classify_action)
+    monkeypatch.setattr(
+        main_module,
+        "synthesize_reply_stream",
+        fake_synthesize_reply_stream,
+    )
+
+    response = client.post(
+        "/chat/biz_toms_hvac/messages",
+        json={"content": "Can you help?"},
+        headers={"Accept": "text/event-stream"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert "violations" not in response.text
+    assert "outcome" not in response.text
+
+    events = _parse_sse(response.text)
+    done = next(event["data"] for event in events if event["event"] == "done")
+    conversation_id = done["conversation_id"]
+    agent_message_id = done["message_id"]
+    customer_text = "".join(
+        event["data"]["text"] for event in events if event["event"] == "token"
+    )
+
+    messages = client.get(
+        f"/chat/biz_toms_hvac/conversations/{conversation_id}/messages",
+    ).json()
+    assert [message["role"] for message in messages] == ["customer", "agent"]
+    assert messages[0]["content"] == "Can you help?"
+    assert messages[1]["id"] == agent_message_id
+    assert messages[1]["content"] == customer_text
+
+    audit_entries = client.get("/audit-log", headers=TOM_HEADERS).json()
+    assert len(audit_entries) == 1
+    audit_entry = audit_entries[0]
+    assert audit_entry["business_id"] == "biz_toms_hvac"
+    assert audit_entry["conversation_id"] == conversation_id
+    assert audit_entry["action_proposed"]["type"] == action.type
+    assert audit_entry["outcome"] == expected_outcome
+    if expected_outcome == "allowed":
+        assert audit_entry["violations"] == []
+    else:
+        assert audit_entry["violations"][0]["rule_snapshot"]
+
+
+def test_chat_rejects_conversation_from_wrong_business(client: TestClient) -> None:
+    conversation_id = db.create_conversation("biz_toms_hvac")
+
+    response = client.post(
+        "/chat/biz_mister_electricity/messages",
+        json={"conversation_id": conversation_id, "content": "Hello"},
+        headers={"Accept": "text/event-stream"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Conversation not found"
+
+
+def _parse_sse(raw: str) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for frame in raw.strip().split("\n\n"):
+        event = "message"
+        data_lines: list[str] = []
+        for line in frame.splitlines():
+            if line.startswith("event:"):
+                event = line.removeprefix("event:").strip()
+            elif line.startswith("data:"):
+                data_lines.append(line.removeprefix("data:").strip())
+        if data_lines:
+            events.append({"event": event, "data": json.loads("\n".join(data_lines))})
+    return events

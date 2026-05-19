@@ -12,7 +12,14 @@ from pydantic import BaseModel, Field, ValidationError
 from . import db
 from .agent import AgentUnavailable, classify_action, synthesize_reply_stream
 from .settings import settings
-from .validator_contract import RuleAdapter, evaluate
+from .validator_contract import (
+    ProposedAction,
+    Rule,
+    RuleAdapter,
+    RuleDecision,
+    Violation,
+    evaluate,
+)
 
 
 @asynccontextmanager
@@ -35,13 +42,6 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     conversation_id: str | None = None
     content: str = Field(min_length=1)
-
-
-class ChatResponse(BaseModel):
-    conversation_id: str
-    message_id: str
-    content: str
-    outcome: Literal["allowed", "blocked", "flagged"]
 
 
 class RulePatch(BaseModel):
@@ -85,13 +85,52 @@ def _sse(event: str, data: dict[str, Any] | str) -> str:
     return f"event: {event}\ndata: {payload}\n\n"
 
 
+def _validate_action_fail_closed(rules: list[Rule], action: ProposedAction) -> RuleDecision:
+    try:
+        return evaluate(rules, action)
+    except Exception:
+        return RuleDecision(
+            outcome="blocked",
+            violations=[
+                Violation(
+                    rule_type="validator",
+                    reason="I don't have access to that info right now.",
+                )
+            ],
+        )
+
+
+def _append_audit_log_nonblocking(
+    *,
+    business_id: str,
+    conversation_id: str,
+    action: ProposedAction,
+    decision: RuleDecision,
+) -> None:
+    try:
+        db.append_audit_log(
+            business_id=business_id,
+            conversation_id=conversation_id,
+            action_proposed=action.model_dump(mode="json"),
+            outcome=decision.outcome,
+            violations=[v.model_dump(mode="json") for v in decision.violations],
+        )
+    except Exception:
+        return
+
+
 @app.post("/chat/{business_id}/messages")
 async def chat_message(business_id: str, request: ChatRequest) -> StreamingResponse:
     business = db.get_business(business_id)
     if not business:
         raise HTTPException(status_code=404, detail="Business not found")
 
-    conversation_id = request.conversation_id or db.create_conversation(business_id)
+    if request.conversation_id:
+        if not db.get_conversation(business_id, request.conversation_id):
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        conversation_id = request.conversation_id
+    else:
+        conversation_id = db.create_conversation(business_id)
     db.insert_message(conversation_id, "customer", request.content)
     rules = db.get_enabled_rule_models(business_id)
 
@@ -111,18 +150,17 @@ async def chat_message(business_id: str, request: ChatRequest) -> StreamingRespo
             )
             return
 
-        decision = evaluate(rules, action)
-        db.append_audit_log(
+        decision = _validate_action_fail_closed(rules, action)
+        _append_audit_log_nonblocking(
             business_id=business_id,
             conversation_id=conversation_id,
-            action_proposed=action.model_dump(mode="json"),
-            outcome=decision.outcome,
-            violations=[v.model_dump(mode="json") for v in decision.violations],
+            action=action,
+            decision=decision,
         )
 
         yield _sse(
             "status",
-            {"phase": "responding", "outcome": decision.outcome},
+            {"phase": "responding"},
         )
 
         buffer = ""
@@ -143,7 +181,6 @@ async def chat_message(business_id: str, request: ChatRequest) -> StreamingRespo
             {
                 "conversation_id": conversation_id,
                 "message_id": message_id,
-                "outcome": decision.outcome,
             },
         )
 

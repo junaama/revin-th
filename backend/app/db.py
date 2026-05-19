@@ -157,6 +157,19 @@ def create_conversation(business_id: str) -> str:
     return conversation_id
 
 
+def get_conversation(business_id: str, conversation_id: str) -> dict[str, Any] | None:
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT id, business_id, customer_id, created_at
+              FROM conversations
+             WHERE business_id = ? AND id = ?
+            """,
+            (business_id, conversation_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+
 def insert_message(conversation_id: str, role: str, content: str) -> str:
     message_id = f"msg_{uuid4().hex}"
     with connect() as conn:
@@ -178,7 +191,7 @@ def list_messages(business_id: str, conversation_id: str) -> list[dict[str, Any]
               FROM messages m
               JOIN conversations c ON c.id = m.conversation_id
              WHERE c.business_id = ? AND c.id = ?
-             ORDER BY m.created_at, m.id
+             ORDER BY m.created_at, m.rowid
             """,
             (business_id, conversation_id),
         ).fetchall()

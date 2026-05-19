@@ -6,6 +6,7 @@ from typing import Any, AsyncIterator
 from zoneinfo import ZoneInfo
 
 from anthropic import AsyncAnthropic
+from pydantic import ValidationError
 
 from .settings import settings
 from .validator_contract import (
@@ -114,8 +115,11 @@ async def classify_action(
 
     for block in response.content:
         if getattr(block, "type", None) == "tool_use":
-            payload = {"type": block.name, **block.input}
-            action = ActionAdapter.validate_python(payload)
+            try:
+                payload = {"type": block.name, **block.input}
+                action = ActionAdapter.validate_python(payload)
+            except (TypeError, ValidationError) as exc:
+                raise AgentUnavailable("Classifier returned malformed tool args") from exc
             return _localize_booking_time(action, rules)
 
     raise AgentUnavailable("Classifier did not return a tool call")
