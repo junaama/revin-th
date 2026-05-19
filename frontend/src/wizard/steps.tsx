@@ -422,20 +422,19 @@ function ChipListField({
         </div>
         <input
           className={inputClass}
-          placeholder={`${placeholder} (press Enter or comma to add)`}
+          placeholder={`${placeholder} (press Enter to add)`}
           onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === ",") {
-              event.preventDefault();
-              const input = event.currentTarget;
-              const value = input.value.trim();
-              if (value && !items.includes(value)) {
-                onChange([...items, value]);
-              }
-              input.value = "";
+            if (event.key !== "Enter") return;
+            event.preventDefault();
+            const input = event.currentTarget;
+            const value = input.value.trim().replace(/,$/, "").trim();
+            if (value && !items.includes(value)) {
+              onChange([...items, value]);
             }
+            input.value = "";
           }}
           onBlur={(event) => {
-            const value = event.currentTarget.value.trim();
+            const value = event.currentTarget.value.trim().replace(/,$/, "").trim();
             if (value && !items.includes(value)) {
               onChange([...items, value]);
               event.currentTarget.value = "";
