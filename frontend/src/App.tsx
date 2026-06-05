@@ -22,6 +22,7 @@ import {
   AuditEntry,
   Business,
   ChatMessage,
+  OwnerRuleProposal,
   RuleRecord,
   createRule,
   deleteService,
@@ -32,6 +33,7 @@ import {
   streamMessage,
   updateRule,
 } from "./api";
+import { OwnerCopilotSidebar } from "./components/OwnerCopilotSidebar";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import {
@@ -63,6 +65,14 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { Textarea } from "./components/ui/textarea";
 import { ServiceRuleWizardDialog } from "./components/ServiceRuleWizardDialog";
+import {
+  flashTargetForRule,
+  restorePayloadFromSnapshot,
+  shouldFlashService,
+  snapshotForProposal,
+  type CopilotUndoSnapshot,
+  type RuleFlashTarget,
+} from "./ownerCopilot";
 import { formatRuleType, presentRule, type RulePresentation } from "./rules/presentation";
 import { ServiceSummary, getServiceSummaries } from "./wizard/state";
 
@@ -304,6 +314,8 @@ function OwnerDashboardPage({
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<DashboardTab>("rules");
   const [wizardIntent, setWizardIntent] = useState<ServiceWizardIntent>(initialWizard);
+  const [copilotOpen, setCopilotOpen] = useState(false);
+  const [ruleFlashTarget, setRuleFlashTarget] = useState<RuleFlashTarget | null>(null);
 
   const selectedBusiness = useMemo(
     () => businesses.find((business) => business.id === businessId),
@@ -324,6 +336,16 @@ function OwnerDashboardPage({
     if (!businessId) return;
     void refreshOwnerData();
   }, [businessId, filter]);
+
+  useEffect(() => {
+    if (!ruleFlashTarget) return;
+    const timer = window.setTimeout(() => {
+      setRuleFlashTarget((current) =>
+        current?.nonce === ruleFlashTarget.nonce ? null : current,
+      );
+    }, 2500);
+    return () => window.clearTimeout(timer);
+  }, [ruleFlashTarget]);
 
   async function refreshOwnerData() {
     if (!businessId) return;
@@ -405,6 +427,72 @@ function OwnerDashboardPage({
     setWizardIntent(intent);
   }
 
+  function flashRule(rule: RuleRecord) {
+    setRuleFlashTarget(flashTargetForRule(rule, Date.now()));
+  }
+
+  async function handleCopilotApply(
+    proposal: OwnerRuleProposal,
+  ): Promise<CopilotUndoSnapshot> {
+    if (!businessId) throw new Error("Select a business before applying a rule edit.");
+    setBusy(true);
+    setError(null);
+    try {
+      if (proposal.patch.operation === "update") {
+        const snapshot = snapshotForProposal(rules, proposal);
+        if (!proposal.patch.ruleId || !snapshot) {
+          throw new Error("That rule changed. Refresh the dashboard and try again.");
+        }
+        const updated = await updateRule(
+          businessId,
+          proposal.patch.ruleId,
+          proposal.patch.payload,
+        );
+        flashRule(updated);
+        await refreshOwnerData();
+        return snapshot;
+      }
+
+      const created = await createRule(businessId, proposal.patch.payload);
+      flashRule(created);
+      await refreshOwnerData();
+      return { operation: "create", createdRuleId: created.id };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Copilot rule edit failed";
+      setError(message);
+      throw err;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleCopilotUndo(snapshot: CopilotUndoSnapshot) {
+    if (!businessId) throw new Error("Select a business before reverting a rule edit.");
+    setBusy(true);
+    setError(null);
+    try {
+      if (snapshot.operation === "create") {
+        await deleteRule(businessId, snapshot.createdRuleId);
+        await refreshOwnerData();
+        return;
+      }
+
+      const restored = await updateRule(
+        businessId,
+        snapshot.previousRule.id,
+        restorePayloadFromSnapshot(snapshot),
+      );
+      flashRule(restored);
+      await refreshOwnerData();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Copilot undo failed";
+      setError(message);
+      throw err;
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function handleWizardOpenChange(open: boolean) {
     if (open || !wizardIntent) return;
     setWizardIntent(null);
@@ -462,6 +550,7 @@ function OwnerDashboardPage({
             busy={busy}
             rules={rules}
             services={services}
+            flashTarget={ruleFlashTarget}
             ruleDraft={ruleDraft}
             onRuleDraft={setRuleDraft}
             onCreateRule={handleCreateRule}
@@ -493,6 +582,13 @@ function OwnerDashboardPage({
         open={Boolean(wizardIntent)}
         serviceName={wizardIntent?.serviceName}
         timezone={selectedBusiness?.timezone ?? "America/Chicago"}
+      />
+      <OwnerCopilotSidebar
+        businessId={businessId}
+        onApply={handleCopilotApply}
+        onOpenChange={setCopilotOpen}
+        onUndo={handleCopilotUndo}
+        open={copilotOpen}
       />
     </Shell>
   );
@@ -582,6 +678,7 @@ function AuditLogPanel({
 
 function RulesPanel({
   busy,
+  flashTarget,
   rules,
   services,
   ruleDraft,
@@ -594,6 +691,7 @@ function RulesPanel({
   onEditServiceRule,
 }: {
   busy: boolean;
+  flashTarget: RuleFlashTarget | null;
   rules: RuleRecord[];
   services: ServiceSummary[];
   ruleDraft: string;
@@ -623,6 +721,7 @@ function RulesPanel({
           {defaultRules.map((rule) => (
             <RuleCard
               busy={busy}
+              flash={flashTarget?.ruleId === rule.id}
               key={rule.id}
               onDeleteRule={onDeleteRule}
               onToggleRule={onToggleRule}
@@ -666,7 +765,9 @@ function RulesPanel({
             {services.map((service) => (
               <li
                 key={service.name}
-                className="flex flex-col gap-3 bg-white px-4 py-4 first:rounded-t-lg last:rounded-b-lg sm:flex-row sm:items-center sm:justify-between"
+                className={`flex flex-col gap-3 bg-white px-4 py-4 first:rounded-t-lg last:rounded-b-lg sm:flex-row sm:items-center sm:justify-between ${
+                  shouldFlashService(service.name, flashTarget) ? "rule-flash" : ""
+                }`}
               >
                 <div className="min-w-0">
                   <h3 className="text-base font-semibold capitalize">{service.name}</h3>
@@ -740,11 +841,13 @@ function ServiceStatusBadge({
 
 function RuleCard({
   busy,
+  flash,
   onDeleteRule,
   onToggleRule,
   rule,
 }: {
   busy: boolean;
+  flash: boolean;
   onDeleteRule: (rule: RuleRecord) => void;
   onToggleRule: (rule: RuleRecord) => void;
   rule: RuleRecord;
@@ -752,7 +855,11 @@ function RuleCard({
   const presentation = presentRule(rule);
 
   return (
-    <article className="rounded-lg border border-[var(--line)] bg-white p-4 shadow-rule">
+    <article
+      className={`rounded-lg border border-[var(--line)] bg-white p-4 shadow-rule ${
+        flash ? "rule-flash" : ""
+      }`}
+    >
       <div className="flex flex-col gap-4">
         <div className="flex items-start gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-[var(--wash)] text-[var(--focus)]">

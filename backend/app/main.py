@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from . import db, service_wizard
 from .agent import AgentUnavailable, classify_action, synthesize_reply_stream
+from .owner_copilot import OwnerCopilotResponse, propose_owner_rule_change
 from .settings import settings
 from .validator_contract import (
     ProposedAction,
@@ -32,7 +33,8 @@ app = FastAPI(title="Agent Revin API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_origin, "http://localhost:5173"],
+    allow_origins=[settings.frontend_origin],
+    allow_origin_regex=r"^http://(localhost|127\.0\.0\.1):517[0-9]$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -41,6 +43,10 @@ app.add_middleware(
 
 class ChatRequest(BaseModel):
     conversation_id: str | None = None
+    content: str = Field(min_length=1)
+
+
+class OwnerCopilotRequest(BaseModel):
     content: str = Field(min_length=1)
 
 
@@ -203,6 +209,25 @@ def chat_history(business_id: str, conversation_id: str) -> list[dict[str, Any]]
     if not db.get_business(business_id):
         raise HTTPException(status_code=404, detail="Business not found")
     return db.list_messages(business_id, conversation_id)
+
+
+@app.post("/owner-copilot/{business_id}/messages")
+async def owner_copilot_message(
+    business_id: str,
+    request: OwnerCopilotRequest,
+) -> dict[str, Any]:
+    business = db.get_business(business_id)
+    if not business:
+        raise HTTPException(status_code=404, detail="Business not found")
+
+    rules = db.list_rules(business_id)
+    response: OwnerCopilotResponse = await propose_owner_rule_change(
+        business_name=business["name"],
+        owner_message=request.content,
+        rules=rules,
+        timezone=business["timezone"],
+    )
+    return response.model_dump(mode="json", by_alias=True)
 
 
 @app.get("/rules")

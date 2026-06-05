@@ -38,6 +38,51 @@ export type RuleRecord = {
   updated_at: number;
 };
 
+export type DiffLine = {
+  op: "keep" | "del" | "change-from" | "add" | "change-to";
+  text: string;
+};
+
+export type RuleMutation = {
+  operation: "create" | "update";
+  ruleId?: string | null;
+  payload: Record<string, unknown>;
+};
+
+export type OwnerRuleProposal = {
+  ruleType: RuleType;
+  ruleTitle: string;
+  fieldLabel: string;
+  summary: string;
+  before: DiffLine[];
+  after: DiffLine[];
+  note?: string | null;
+  patch: RuleMutation;
+};
+
+export type ClarifyChip = {
+  label: string;
+  fill: string;
+};
+
+export type OwnerCopilotResponse =
+  | {
+      kind: "proposal";
+      message: string;
+      proposal: OwnerRuleProposal;
+      reasoning: string[];
+    }
+  | {
+      kind: "clarify";
+      message: string;
+      question: string;
+      chips: ClarifyChip[];
+    }
+  | {
+      kind: "message";
+      message: string;
+    };
+
 export type DayOfWeek =
   | "monday"
   | "tuesday"
@@ -245,6 +290,16 @@ export function deleteRule(businessId: string, ruleId: string): Promise<void> {
     if (!response.ok) {
       throw new Error(`Delete failed: ${response.status}`);
     }
+  });
+}
+
+export function sendOwnerCopilotMessage(
+  businessId: string,
+  content: string,
+): Promise<OwnerCopilotResponse> {
+  return request<OwnerCopilotResponse>(`/owner-copilot/${businessId}/messages`, {
+    method: "POST",
+    body: JSON.stringify({ content }),
   });
 }
 

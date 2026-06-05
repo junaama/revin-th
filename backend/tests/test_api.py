@@ -49,6 +49,21 @@ def test_health_and_seeded_businesses(client: TestClient) -> None:
     }
 
 
+def test_local_vite_fallback_origin_is_allowed_for_browser_verification(
+    client: TestClient,
+) -> None:
+    response = client.options(
+        "/businesses",
+        headers={
+            "Origin": "http://127.0.0.1:5174",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:5174"
+
+
 @pytest.mark.parametrize(
     ("headers", "expected_business_id", "expected_ids"),
     [
